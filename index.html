@@ -914,6 +914,7 @@ async function connectAll() {
     await Promise.all([loadProjects(), loadTeamMembers()]);
     gConnected = true;
     sessionStorage.setItem('ar_api_token', gApiToken);
+    localStorage.setItem('ar_api_token', gApiToken);
     status.textContent = `✓ Connected — ${allProjects.length} projects loaded`;
     status.className = 'creds-status ok';
     document.getElementById('projectSearch').disabled = false;
@@ -1439,7 +1440,7 @@ window.onload = () => {
   updateDriveStatus();
   initStatementsUpload();
 
-  const savedToken = sessionStorage.getItem('ar_api_token');
+  const savedToken = localStorage.getItem('ar_api_token');
   if (savedToken) {
     document.getElementById('apiToken').value = savedToken;
     connectAll();
