@@ -562,12 +562,15 @@ td.amount { color: var(--accent2); }
 </header>
 
 <!-- SHARED CREDENTIALS BAR -->
-<div class="creds-bar" style="justify-content:flex-end">
-  <span class="creds-status" id="credsStatus" style="display:none"></span>
-  <button id="driveConnectBtn" onclick="connectGoogleDrive()" style="padding:8px 14px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;border-radius:3px;cursor:pointer;white-space:nowrap">&#x2601; Connect Drive</button>
-  <span id="driveStatus" style="font-size:10px;color:var(--text-dim);margin-left:6px"></span>
-  <input type="hidden" id="apiToken" value="" />
+<div class="creds-bar">
+  <input type="password" id="apiToken" placeholder="Airtable token" style="padding:6px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;width:220px" />
   <input type="hidden" id="baseId" value="appk8z59VBuLT9ndp" />
+  <button onclick="connectAll()" style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer;text-transform:uppercase;letter-spacing:0.06em">Connect</button>
+  <span class="creds-status" id="credsStatus"></span>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+    <button id="driveConnectBtn" onclick="connectGoogleDrive()" style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;border-radius:3px;cursor:pointer;white-space:nowrap">&#x2601; Drive</button>
+    <span id="driveStatus" style="font-size:10px;color:var(--text-dim)"></span>
+  </div>
 </div>
 
 <!-- ══════════ IMPORTER TAB ══════════ -->
@@ -1436,13 +1439,10 @@ window.onload = () => {
   updateDriveStatus();
   initStatementsUpload();
 
-  // Load token from sessionStorage
   const savedToken = sessionStorage.getItem('ar_api_token');
   if (savedToken) {
     document.getElementById('apiToken').value = savedToken;
     connectAll();
-  } else {
-    showTokenPrompt();
   }
 
   const today = new Date().toISOString().split('T')[0];
