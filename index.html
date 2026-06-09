@@ -650,25 +650,24 @@ td.amount { color: var(--accent2); }
   <div class="lf-form-panel">
 
     <div class="lf-section">
-      <div class="lf-section-label">1 — Project & Invoices</div>
+      <div class="lf-section-label">1 — Client & Invoices</div>
       <div class="lf-field">
-        <label>Project <span class="req">*</span></label>
+        <label>Client <span class="req">*</span></label>
         <div class="proj-search-wrap">
-          <input type="text" id="projectSearch" placeholder="Search by project code or name..." oninput="searchProjects(this.value)" autocomplete="off" class="lf-select" disabled />
+          <input type="text" id="projectSearch" placeholder="Search by client name..." oninput="searchClients(this.value)" autocomplete="off" class="lf-select" disabled />
           <div class="proj-dropdown" id="projectDropdown"></div>
         </div>
         <div class="sel-proj" id="selectedProject">
           <div>
             <div class="p-code" id="selProjCode"></div>
             <div class="p-name" id="selProjName"></div>
-            <div class="p-client" id="selProjClient" style="font-size:10px;color:var(--lf-accent-warm);margin-top:3px;"></div>
           </div>
           <button class="clear-proj" onclick="clearProject()">×</button>
         </div>
       </div>
       <div class="lf-field" id="invoiceFieldGroup" style="display:none">
         <label>Invoices <span class="req">*</span></label>
-        <div class="inv-list" id="invoiceList"><div class="inv-loading">Select a project first</div></div>
+        <div class="inv-list" id="invoiceList"><div class="inv-loading">Select a client first</div></div>
       </div>
     </div>
 
@@ -848,6 +847,7 @@ let conflictResolutions = {};
 
 // Log form state
 let allProjects = [];
+let allClients = [];
 let selectedProjectId = null;
 let projectInvoices = [];
 let teamMembers = [];
@@ -911,7 +911,7 @@ async function connectAll() {
   status.className = 'creds-status';
 
   try {
-    await Promise.all([loadProjects(), loadTeamMembers()]);
+    await Promise.all([loadProjects(), loadTeamMembers(), loadClients()]);
     gConnected = true;
     sessionStorage.setItem('ar_api_token', gApiToken);
     localStorage.setItem('ar_api_token', gApiToken);
@@ -985,6 +985,17 @@ async function loadProjects() {
     if (data.records) allProjects = allProjects.concat(data.records);
     offset = data.offset || '';
   } while (offset);
+}
+
+async function loadClients() {
+  allClients = [];
+  let offset = '';
+  do {
+    const data = await atFetch('Clients', `?fields[]=Client+Name${offset ? '&offset='+offset : ''}`);
+    if (data.records) allClients = allClients.concat(data.records);
+    offset = data.offset || '';
+  } while (offset);
+  allClients.sort((a,b) => (a.fields['Client Name']||'').localeCompare(b.fields['Client Name']||''));
 }
 
 async function loadTeamMembers() {
@@ -1451,18 +1462,104 @@ window.onload = () => {
   const nextWeek = new Date(); nextWeek.setDate(nextWeek.getDate() + 7);
   document.getElementById('nextStepDue').value = nextWeek.toISOString().split('T')[0];
 };
-function searchProjects(query) {
+function searchClients(query) {
   const dropdown = document.getElementById('projectDropdown');
   if (!query || query.length < 1) { dropdown.classList.remove('open'); return; }
-  const q = query.toLowerCase();
-  const matches = allProjects.filter(p => {
-    const code = (p.fields['Project Code'] || '').toLowerCase();
-    const name = (p.fields['Project Name'] || '').toLowerCase();
-    return code.includes(q) || name.includes(q);
-  }).slice(0, 12);
-  if (matches.length === 0) { dropdown.innerHTML = '<div class="proj-option" style="color:var(--lf-text-dim)">No projects found</div>'; }
-  else { dropdown.innerHTML = matches.map(p => `<div class="proj-option" onclick="selectProject('${p.id}','${escJs(p.fields["Project Code"]||"")}','${escJs(p.fields["Project Name"]||"")}')"><div class="p-code">${p.fields['Project Code']||'—'}</div><div class="p-name">${p.fields['Project Name']||'Unnamed'}</div></div>`).join(''); }
+  const matches = allClients.filter(c =>
+    (c.fields['Client Name']||'').toLowerCase().includes(query.toLowerCase())
+  ).slice(0, 10);
+  if (matches.length === 0) { dropdown.classList.remove('open'); return; }
+  dropdown.innerHTML = matches.map(c =>
+    `<div class="proj-option" onclick="selectClient('${c.id}', '${escJs(c.fields['Client Name']||'')}')">${c.fields['Client Name']||''}</div>`
+  ).join('');
   dropdown.classList.add('open');
+}
+
+async function selectClient(id, name) {
+  document.getElementById('projectDropdown').classList.remove('open');
+  document.getElementById('projectSearch').style.display = 'none';
+  document.getElementById('selProjCode').textContent = '';
+  document.getElementById('selProjName').textContent = name;
+  document.getElementById('selectedProject').classList.add('show');
+  selectedProjectId = id; // reuse selectedProjectId to store client ID
+  selectedClientId = id;
+  document.getElementById('invoiceFieldGroup').style.display = 'block';
+  loadClientContacts(id);
+  document.getElementById('invoiceList').innerHTML = '<div class="inv-loading">Loading invoices...</div>';
+  document.getElementById('historyContent').innerHTML = '<div class="hist-loading">Loading history...</div>';
+  await loadClientInvoices(id);
+  await loadClientHistory(id);
+}
+
+async function loadClientInvoices(clientId) {
+  try {
+    // Fetch all unpaid/partially paid invoices for this client
+    const formula = encodeURIComponent(`AND(OR({Status}="Unpaid",{Status}="Partially Paid"),{Client}="${clientId}")`);
+    const data = await atFetch(TABLE_INVOICES, `?filterByFormula=${formula}&fields[]=Invoice+Number&fields[]=Balance+Due&fields[]=Status&fields[]=Days+Overdue&fields[]=Projects&sort[0][field]=Invoice+Number&sort[0][direction]=asc`);
+    projectInvoices = data.records || [];
+    const list = document.getElementById('invoiceList');
+    if (projectInvoices.length === 0) { list.innerHTML = '<div class="inv-loading">No open invoices found</div>'; return; }
+
+    // Group by project
+    const projIds = [...new Set(projectInvoices.flatMap(r => r.fields['Projects'] || []))];
+    const projNames = {};
+    if (projIds.length > 0) {
+      const f = encodeURIComponent(`OR(${projIds.map(id => `RECORD_ID()="${id}"`).join(',')})`);
+      const pd = await atFetch(TABLE_PROJECTS, `?filterByFormula=${f}&fields[]=Project+Name&fields[]=Project+Code`);
+      (pd.records || []).forEach(r => {
+        projNames[r.id] = r.fields['Project Name'] || r.fields['Project Code'] || r.id;
+      });
+    }
+
+    // Group invoices by project
+    const grouped = {};
+    projectInvoices.forEach(inv => {
+      const projId = (inv.fields['Projects'] || [])[0] || 'unknown';
+      if (!grouped[projId]) grouped[projId] = [];
+      grouped[projId].push(inv);
+    });
+
+    const total = projectInvoices.reduce((s,r) => s + (parseFloat(r.fields['Balance Due'])||0), 0);
+    let html = `<div class="inv-list-hdr"><span>${projectInvoices.length} invoice${projectInvoices.length!==1?'s':''} · $${fmt(total)} outstanding</span><button class="sel-all-btn" onclick="toggleAllInvoices()">Select All</button></div>`;
+
+    Object.entries(grouped).forEach(([projId, invs]) => {
+      const projName = projNames[projId] || 'Unknown Project';
+      const projTotal = invs.reduce((s,r) => s + (parseFloat(r.fields['Balance Due'])||0), 0);
+      html += `<div style="padding:6px 10px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-dim)">${projName}</span>
+        <button onclick="toggleProjectGroup('${projId}')" style="font-size:9px;background:none;border:none;color:var(--lf-accent);cursor:pointer;font-family:'DM Mono',monospace;padding:2px 6px;border:1px solid var(--lf-accent);border-radius:2px">Select All</button>
+      </div>`;
+      html += invs.map(inv => {
+        const overdue = parseInt(inv.fields['Days Overdue'])||0;
+        const balance = parseFloat(inv.fields['Balance Due'])||0;
+        return `<div class="inv-item" data-proj="${projId}" onclick="toggleInvoice(this, event)"><input type="checkbox" class="inv-checkbox" value="${inv.id}" onclick="event.stopPropagation()" /><div class="inv-item-info"><div class="inv-item-num">${inv.fields['Invoice Number']}</div><div class="inv-item-meta">${inv.fields['Status']||''}${overdue>0?` · <span style="color:var(--lf-danger)">${overdue}d overdue</span>`:''}</div></div><div class="inv-item-bal">$${fmt(balance)}</div></div>`;
+      }).join('');
+    });
+
+    list.innerHTML = html;
+  } catch(e) { document.getElementById('invoiceList').innerHTML = `<div class="inv-loading" style="color:var(--lf-danger)">Error: ${e.message}</div>`; }
+}
+
+function toggleProjectGroup(projId) {
+  const items = document.querySelectorAll(`.inv-item[data-proj="${projId}"]`);
+  const boxes = Array.from(items).map(el => el.querySelector('.inv-checkbox'));
+  const allChecked = boxes.every(c => c.checked);
+  boxes.forEach((c, i) => {
+    c.checked = !allChecked;
+    items[i].classList.toggle('checked', !allChecked);
+  });
+  updateSubmitBtn();
+}
+
+async function loadClientHistory(clientId) {
+  try {
+    // Load history for all invoices belonging to this client
+    const ids = projectInvoices.map(i => i.id);
+    if (ids.length === 0) { document.getElementById('historyContent').innerHTML = '<div class="hist-empty">No invoices found</div>'; return; }
+    const formula = encodeURIComponent(`OR(${ids.map(id=>`FIND("${id}",ARRAYJOIN({Invoices},","))`).join(',')})`);
+    const data = await atFetch(TABLE_ACTIVITY, `?filterByFormula=${formula}&fields[]=Date&fields[]=Action+Taken&fields[]=Client+Contact&fields[]=Notes&fields[]=Next+Steps&fields[]=Next+Step+Due?&fields[]=Performed+By&sort[0][field]=Date&sort[0][direction]=desc&maxRecords=10`);
+    renderHistory(data.records || []);
+  } catch(e) { document.getElementById('historyContent').innerHTML = `<div class="hist-empty" style="color:var(--lf-danger)">Error: ${e.message}</div>`; }
 }
 
 async function selectProject(id, code, name) {
@@ -1492,7 +1589,7 @@ function clearProject() {
   document.getElementById('projectSearch').style.display = 'block';
   document.getElementById('projectSearch').value = '';
   document.getElementById('invoiceFieldGroup').style.display = 'none';
-  document.getElementById('historyContent').innerHTML = '<div class="hist-empty">Select a project to see its activity history</div>';
+  document.getElementById('historyContent').innerHTML = '<div class="hist-empty">Select a client to see activity history</div>';
 }
 
 async function loadProjectInvoices(projectId, projectCode) {
@@ -1538,7 +1635,7 @@ function updateSubmitBtn() {
   const checked = document.querySelectorAll('.inv-checkbox:checked').length;
   if (!selectedProjectId) {
     btn.style.opacity = '0.4'; btn.style.cursor = 'not-allowed';
-    status.textContent = 'Select a project to continue';
+    status.textContent = 'Select a client to continue';
   } else if (checked === 0) {
     btn.style.opacity = '0.4'; btn.style.cursor = 'not-allowed';
     status.textContent = `${document.querySelectorAll('.inv-checkbox').length} invoices available — select at least one`;
@@ -1635,7 +1732,7 @@ async function submitLog() {
   const followupRequired = document.getElementById('followupRequired').checked;
   const nextSteps = document.getElementById('nextSteps').value;
   const nextDue = document.getElementById('nextStepDue').value;
-  if (!selectedProjectId) { showToast('Please select a project', true, false); return; }
+  if (!selectedProjectId) { showToast('Please select a client', true, false); return; }
   if (selectedInvoices.length === 0) { showToast('Please select at least one invoice', true, false); return; }
   if (!date || !action || !loggedBy || !notes) { showToast('Please fill in all required fields', true, false); return; }
   if (followupRequired && (!nextSteps || !nextDue)) { showToast('Please complete the next step fields', true, false); return; }
@@ -1678,7 +1775,7 @@ async function submitLog() {
     });
     updateSubmitBtn();
     // Reload history with slight delay to allow Airtable to index
-    setTimeout(() => loadProjectHistory(selectedProjectId), 1000);
+    setTimeout(() => loadClientHistory(selectedProjectId), 1000);
     setTimeout(() => {
       status.textContent = '';
       btn.disabled = false;
