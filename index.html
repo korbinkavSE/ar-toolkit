@@ -654,7 +654,7 @@ td.amount { color: var(--accent2); }
       <div class="lf-field">
         <label>Client <span class="req">*</span></label>
         <div class="proj-search-wrap">
-          <input type="text" id="projectSearch" placeholder="Search by client name..." oninput="searchClients(this.value)" autocomplete="off" class="lf-select" disabled />
+          <input type="text" id="projectSearch" placeholder="Search or select a client..." oninput="searchClients(this.value)" onfocus="searchClients(this.value)" autocomplete="off" class="lf-select" disabled />
           <div class="proj-dropdown" id="projectDropdown"></div>
         </div>
         <div class="sel-proj" id="selectedProject">
@@ -1464,10 +1464,9 @@ window.onload = () => {
 };
 function searchClients(query) {
   const dropdown = document.getElementById('projectDropdown');
-  if (!query || query.length < 1) { dropdown.classList.remove('open'); return; }
-  const matches = allClients.filter(c =>
-    (c.fields['Client Name']||'').toLowerCase().includes(query.toLowerCase())
-  ).slice(0, 10);
+  const matches = query
+    ? allClients.filter(c => (c.fields['Client Name']||'').toLowerCase().includes(query.toLowerCase())).slice(0, 15)
+    : allClients.slice(0, 20);
   if (matches.length === 0) { dropdown.classList.remove('open'); return; }
   dropdown.innerHTML = matches.map(c =>
     `<div class="proj-option" onclick="selectClient('${c.id}', '${escJs(c.fields['Client Name']||'')}')">${c.fields['Client Name']||''}</div>`
@@ -1494,7 +1493,7 @@ async function selectClient(id, name) {
 async function loadClientInvoices(clientId) {
   try {
     // Fetch all unpaid/partially paid invoices for this client
-    const formula = encodeURIComponent(`AND(OR({Status}="Unpaid",{Status}="Partially Paid"),{Client}="${clientId}")`);
+    const formula = encodeURIComponent(`AND(OR({Status}="Unpaid",{Status}="Partially Paid"),FIND("${clientId}",ARRAYJOIN({Client},",")))`);
     const data = await atFetch(TABLE_INVOICES, `?filterByFormula=${formula}&fields[]=Invoice+Number&fields[]=Balance+Due&fields[]=Status&fields[]=Days+Overdue&fields[]=Projects&sort[0][field]=Invoice+Number&sort[0][direction]=asc`);
     projectInvoices = data.records || [];
     const list = document.getElementById('invoiceList');
@@ -3887,6 +3886,7 @@ async function loadQueue() {
         invNum: String(f['Invoice Number'] || '').trim(),
         project: projId ? (projNames[projId] || '') : '',
         client: clientId ? (clientNames[clientId] || '') : '',
+        clientId: clientId || '',
         balance: parseFloat(f['Balance Due'] || 0),
         daysOverdue: parseInt(f['Days Overdue'] || 0),
         triageStatus: f['Triage Status'] || '',
@@ -3914,6 +3914,7 @@ async function loadQueue() {
           invNum: inv.invNum,
           project: inv.projId ? (projNames[inv.projId] || '') : '',
           client: inv.clientId ? (clientNames[inv.clientId] || '') : '',
+          clientId: inv.clientId || '',
           balance: inv.balance,
           daysOverdue: inv.daysOverdue,
           triageStatus: nextStep || 'Follow-up',
@@ -3925,10 +3926,17 @@ async function loadQueue() {
       });
     });
 
+    // Sort by client name then due date within each section
+    const sortByClient = arr => [...arr].sort((a,b) => {
+      const clientCmp = a.client.localeCompare(b.client);
+      if (clientCmp !== 0) return clientCmp;
+      return (a.triageDueDate || '').localeCompare(b.triageDueDate || '');
+    });
+
     // Split into overdue, due soon, no date
-    const overdue = invoices.filter(i => i.daysUntilDue !== null && i.daysUntilDue < 0);
-    const dueSoon = invoices.filter(i => i.daysUntilDue !== null && i.daysUntilDue >= 0);
-    const noDate = invoices.filter(i => i.daysUntilDue === null);
+    const overdue = sortByClient(invoices.filter(i => i.daysUntilDue !== null && i.daysUntilDue < 0));
+    const dueSoon = sortByClient(invoices.filter(i => i.daysUntilDue !== null && i.daysUntilDue >= 0));
+    const noDate = sortByClient(invoices.filter(i => i.daysUntilDue === null));
 
     if (invoices.length === 0) {
       listEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:20px 0">No open triage actions. Go to the Triage tab to assign actions.</div>';
@@ -3947,6 +3955,7 @@ async function loadQueue() {
             <th style="padding:6px 12px;text-align:right;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Balance</th>
             <th style="padding:6px 12px;text-align:center;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Action</th>
             <th style="padding:6px 12px;text-align:center;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Due By</th>
+            <th style="padding:6px 12px;text-align:center;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Contacts</th>
             <th style="padding:6px 12px;text-align:center;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Done</th>
           </tr></thead><tbody>`;
 
@@ -3963,6 +3972,7 @@ async function loadQueue() {
           <td style="padding:10px 12px;text-align:right;font-size:12px;font-weight:500;color:var(--accent)">$${fmt(inv.balance)}</td>
           <td style="padding:10px 12px;text-align:center"><span style="font-size:10px;padding:3px 8px;border-radius:10px;background:${statusColor}20;color:${statusColor}">${inv.triageStatus}</span>${sourceBadge}</td>
           <td style="padding:8px 12px;text-align:center"><input type="date" value="${inv.triageDueDate || ''}" onchange="updateQueueDueDate('${inv.id}', this.value, '${inv.source||'triage'}', '${inv.actLogId||''}')" style="padding:4px 6px;background:var(--surface);border:1px solid var(--border);color:${dueColor};font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;width:120px" /></td>
+          <td style="padding:10px 12px;text-align:center"><button onclick="showQueueContacts('${inv.clientId}', '${escJs(inv.client)}')" style="padding:4px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer" title="View contacts">👤</button></td>
           <td style="padding:10px 12px;text-align:center"><button onclick="showDoneModal('${inv.id}', '${escJs(inv.invNum)}', '${escJs(inv.client)}', '${inv.source||'triage'}', '${inv.actLogId||''}')" style="padding:4px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer">✓ Done</button></td>
         </tr>`;
       });
@@ -3978,6 +3988,91 @@ async function loadQueue() {
 
   } catch(e) {
     listEl.innerHTML = `<div style="color:var(--err);font-size:12px">Failed to load: ${e.message}</div>`;
+  }
+}
+
+async function showQueueContacts(clientId, clientName) {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:24px;max-width:480px;width:100%">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-family:'Fraunces',serif;font-weight:300;font-size:16px">${clientName} — Contacts</div>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer">✕</button>
+      </div>
+      <div id="queue-contacts-list">Loading...</div>
+      <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:16px">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:10px">Add Contact</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <input type="text" id="qc-name" placeholder="Name" style="padding:7px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
+          <input type="text" id="qc-role" placeholder="Title / Role" style="padding:7px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
+          <input type="text" id="qc-phone" placeholder="Phone" style="padding:7px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
+          <input type="text" id="qc-email" placeholder="Email" style="padding:7px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
+        </div>
+        <button onclick="addQueueContact('${clientId}', '${escJs(clientName)}')" style="width:100%;padding:8px;background:#2d4a3e;color:#e8e4d8;border:none;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">+ Add Contact</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  // Load contacts
+  try {
+    const formula = encodeURIComponent(`FIND("${clientId}",ARRAYJOIN({Client},","))`);
+    const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Contacts?filterByFormula=${formula}&fields[]=Name&fields[]=Role&fields[]=Phone&fields[]=Email`, {
+      headers: { Authorization: `Bearer ${gApiToken}` }
+    });
+    const data = await res.json();
+    const contacts = data.records || [];
+    const listEl = document.getElementById('queue-contacts-list');
+    if (!listEl) return;
+    if (contacts.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px">No contacts found.</div>';
+      return;
+    }
+    listEl.innerHTML = contacts.map(c => `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="font-size:13px;font-weight:500">${c.fields['Name'] || '—'}</div>
+        ${c.fields['Role'] ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">${c.fields['Role']}</div>` : ''}
+        <div style="display:flex;gap:16px;margin-top:6px">
+          ${c.fields['Phone'] ? `<a href="tel:${c.fields['Phone']}" style="font-size:11px;color:var(--accent);text-decoration:none">📞 ${c.fields['Phone']}</a>` : ''}
+          ${c.fields['Email'] ? `<a href="mailto:${c.fields['Email']}" style="font-size:11px;color:var(--accent);text-decoration:none">✉ ${c.fields['Email']}</a>` : ''}
+        </div>
+      </div>`).join('');
+  } catch(e) {
+    const listEl = document.getElementById('queue-contacts-list');
+    if (listEl) listEl.innerHTML = `<div style="color:var(--err);font-size:12px">Error: ${e.message}</div>`;
+  }
+}
+
+async function addQueueContact(clientId, clientName) {
+  const name = document.getElementById('qc-name').value.trim();
+  const role = document.getElementById('qc-role').value.trim();
+  const phone = document.getElementById('qc-phone').value.trim();
+  const email = document.getElementById('qc-email').value.trim();
+  if (!name) { showToast('Name is required', true, false); return; }
+  try {
+    const fields = { 'Name': name };
+    if (role) fields['Role'] = role;
+    if (phone) fields['Phone'] = phone;
+    if (email) fields['Email'] = email;
+    if (clientId) fields['Client'] = [clientId];
+    const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Contacts`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${gApiToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields, typecast: true })
+    });
+    const data = await res.json();
+    if (!data.id) throw new Error(data.error?.message || 'Failed');
+    showToast(`✓ Added ${name}`, false, false);
+    // Refresh the contact list
+    document.getElementById('queue-contacts-list').innerHTML = 'Loading...';
+    ['qc-name','qc-role','qc-phone','qc-email'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+    showQueueContacts(clientId, clientName);
+    // Remove old modal first since showQueueContacts adds a new one
+    const modals = document.querySelectorAll('[style*="position:fixed"][style*="z-index:1000"]');
+    if (modals.length > 1) modals[0].remove();
+  } catch(e) {
+    showToast(`✗ ${e.message}`, true, false);
   }
 }
 
