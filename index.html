@@ -1800,64 +1800,19 @@ let clientContacts = [];
 let selectedClientId = null;
 let selectedContacts = { cc: [], ccns: [] }; // multi-select
 
-async function loadClientContacts(projectId) {
+async function loadClientContacts(clientId) {
   clientContacts = [];
-  selectedClientId = null;
-  if (!gApiToken || !gBaseId) return;
+  selectedClientId = clientId;
+  if (!gApiToken || !gBaseId || !clientId) return;
   try {
-    // Step 1: get project record to find client name
-    const projData = await atFetch(TABLE_PROJECTS, `/${projectId}`);
-    const pFields = projData.fields || {};
-    console.log('Project fields:', JSON.stringify(Object.keys(pFields)));
-
-    // Get client name from lookup field (Client (from Project) or similar)
-    let clientName = pFields['Client Name'] || pFields['Client (from Project)'] || '';
-    // If it's an array (lookup), take first value
-    if (Array.isArray(clientName)) clientName = clientName[0] || '';
-
-    // Also try to get client record ID from linked field
-    const clientLink = pFields['Clients'] || pFields['Client'] || [];
-    const clientIds = Array.isArray(clientLink) ? clientLink : [clientLink];
-    selectedClientId = clientIds[0] || null;
-
-    console.log('Client name:', clientName, 'Client ID:', selectedClientId);
-
-    // Show client name
-    const el = document.getElementById('selProjClient');
-    if (el && clientName) el.textContent = '\u21b3 ' + clientName;
-
-    if (!clientName && !selectedClientId) {
-      renderContactOptions('cc');
-      renderContactOptions('ccns');
-      return;
-    }
-
-    // Step 2: fetch contacts using client record ID (we have it from project)
-    let data = { records: [] };
-    if (selectedClientId) {
-      // Try multiple filter approaches for linked record fields
-      // Load ALL contacts with Client field, filter client-side
-      const allContacts = await atFetch(TABLE_CONTACTS, `?fields[]=Name&fields[]=Role&fields[]=Email&fields[]=Phone&fields[]=Client`);
-      console.log('All contacts:', allContacts.records?.length, 'filtering for client:', selectedClientId);
-      // Filter client-side by matching the linked record ID
-      const filtered = (allContacts.records || []).filter(r => {
-        const clientField = r.fields['Client'];
-        if (!clientField) return false;
-        const clientIds = Array.isArray(clientField) ? clientField : [clientField];
-        return clientIds.includes(selectedClientId);
-      });
-      console.log('Filtered contacts:', filtered.length);
-      data = { records: filtered };
-    }
-
-    // Last resort: all contacts, user can search
-    if (!data.records?.length) {
-      data = await atFetch(TABLE_CONTACTS, `?fields[]=Name&fields[]=Role&fields[]=Email&fields[]=Phone`);
-      console.log('All contacts fallback:', data.records?.length);
-    }
-
-    clientContacts = data.records || [];
-    console.log('Final contacts count:', clientContacts.length);
+    const allContacts = await atFetch(TABLE_CONTACTS, `?fields[]=Name&fields[]=Role&fields[]=Email&fields[]=Phone&fields[]=Client`);
+    clientContacts = (allContacts.records || []).filter(r => {
+      const cf = r.fields['Client'];
+      if (!cf) return false;
+      const ids = Array.isArray(cf) ? cf : [cf];
+      return ids.includes(clientId);
+    });
+    console.log('Contacts for client', clientId, ':', clientContacts.length);
   } catch(e) {
     console.error('loadClientContacts error:', e.message);
     clientContacts = [];
@@ -4017,12 +3972,16 @@ async function showQueueContacts(clientId, clientName) {
 
   // Load contacts
   try {
-    const formula = encodeURIComponent(`FIND("${clientId}",ARRAYJOIN({Client},","))`);
-    const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Contacts?filterByFormula=${formula}&fields[]=Name&fields[]=Role&fields[]=Phone&fields[]=Email`, {
+    const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Contacts?fields[]=Name&fields[]=Role&fields[]=Phone&fields[]=Email&fields[]=Client`, {
       headers: { Authorization: `Bearer ${gApiToken}` }
     });
     const data = await res.json();
-    const contacts = data.records || [];
+    const contacts = (data.records || []).filter(r => {
+      const cf = r.fields['Client'];
+      if (!cf) return false;
+      const ids = Array.isArray(cf) ? cf : [cf];
+      return ids.includes(clientId);
+    });
     const listEl = document.getElementById('queue-contacts-list');
     if (!listEl) return;
     if (contacts.length === 0) {
