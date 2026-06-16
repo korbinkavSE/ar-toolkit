@@ -554,9 +554,9 @@ td.amount { color: var(--accent2); }
   </div>
   <nav class="tabs">
     <button class="tab-btn active" onclick="switchTab('importer')">⬆ Import Invoices</button>
+    <button class="tab-btn" onclick="switchTab('ar-overview')">📊 A/R Overview</button>
     <button class="tab-btn" onclick="switchTab('logform')">✎ Log an Update</button>
     <button class="tab-btn" onclick="switchTab('statements')">📄 Statements</button>
-    <button class="tab-btn" onclick="switchTab('triage')">⚡ Triage</button>
     <button class="tab-btn" onclick="switchTab('queue')">📋 Queue</button>
   </nav>
 </header>
@@ -858,12 +858,12 @@ const TABLE_ACTIVITY = 'Activity Log';
 const TABLE_TEAM = 'Team Members';
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', ['importer','logform','statements','triage','queue'][i] === tab));
+  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', ['importer','ar-overview','logform','statements','queue'][i] === tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
   if (tab === 'statements') { initStatementsUpload(); loadSentLog().then(() => { if (stmtData && stmtData.clients && stmtData.clients.length > 0) renderStmtClientList(); }); }
-  if (tab === 'notes') initNotesUpload();
   if (tab === 'queue') loadQueue();
+  if (tab === 'ar-overview') loadAROverview();
 }
 
 function showToast(msg, isErr = false, isDark = true) {
@@ -3403,49 +3403,58 @@ function printStatement() {
 
 </div>
 
-<!-- TRIAGE TAB -->
-<div class="tab-panel" id="tab-triage">
+<!-- A/R OVERVIEW TAB -->
+<div class="tab-panel" id="tab-ar-overview">
 <div class="imp-main">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div>
-        <div style="font-family:'Fraunces',serif;font-weight:300;font-size:20px;color:var(--text)">Invoice Triage</div>
-        <div style="font-size:11px;color:var(--text-dim);margin-top:2px">All past due invoices — assign action by client</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <select id="triageClientFilter" style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" onchange="renderTriageList()">
-          <option value="">All Clients</option>
-        </select>
-        <button onclick="loadTriage()" style="padding:8px 14px;background:var(--surface);border:1px solid var(--accent);color:var(--accent);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer;letter-spacing:0.04em">⟳ Load</button>
-      </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div>
+      <div style="font-family:'Fraunces',serif;font-weight:300;font-size:20px;color:var(--text)">A/R Overview</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:2px">All past due invoices — grouped by client</div>
     </div>
-    <div id="triageList"></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="arClientFilter" style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" onchange="renderAROverview()">
+        <option value="">All Clients</option>
+      </select>
+      <select id="arActionFilter" style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" onchange="renderAROverview()">
+        <option value="">All Invoices</option>
+        <option value="action">Action Needed</option>
+        <option value="none">No Action Assigned</option>
+        <option value="Call Client">Call Client</option>
+        <option value="Threaten Collections">Threaten Collections</option>
+        <option value="Send to Collections">Send to Collections</option>
+      </select>
+      <button onclick="loadAROverview()" style="padding:8px 14px;background:var(--surface);border:1px solid var(--accent);color:var(--accent);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer;letter-spacing:0.04em">⟳ Load</button>
+    </div>
   </div>
+  <div id="arOverviewList"></div>
+</div>
 </div>
 
 <script>
-// ── TRIAGE ──────────────────────────────────────────────
-let triageData = {}; // clientName → [{invoice obj}]
-const TRIAGE_STATUSES = ['No Action Needed', 'Call Client', 'Threaten Collections', 'Send to Collections'];
-const TRIAGE_COLORS = {
-  'No Action Needed': '#27ae60',
+// ── A/R OVERVIEW ─────────────────────────────────────────
+let arData = {}; // clientName → [{invoice obj}]
+let arActivityByInv = {}; // invId → [note strings]
+let arOpenActions = {}; // invId → {status, dueDate}
+
+const ACTION_COLORS = {
   'Call Client': '#f39c12',
   'Threaten Collections': '#e67e22',
   'Send to Collections': '#c0392b'
 };
 
-async function loadTriage() {
+async function loadAROverview() {
   if (!gApiToken || !gBaseId) { showToast('Connect Airtable first', true, false); return; }
-  const listEl = document.getElementById('triageList');
+  const listEl = document.getElementById('arOverviewList');
   listEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:20px 0">Loading...</div>';
 
   try {
     // Fetch all past due invoices
-    const filter = encodeURIComponent(`AND(OR({Status}="Unpaid",{Status}="Partially Paid"),{Days Overdue}>0)`);
+    const filter = encodeURIComponent('AND(OR({Status}="Unpaid",{Status}="Partially Paid"),{Days Overdue}>0)');
     let allInvoices = [], offset = '';
     do {
       const url = `https://api.airtable.com/v0/${gBaseId}/Invoices?filterByFormula=${filter}` +
-        `&fields[]=Invoice+Number&fields[]=Balance+Due&fields[]=Due+Date&fields[]=Days+Overdue` +
-        `&fields[]=Projects&fields[]=Client&fields[]=Triage+Status&fields[]=Triage+Due+Date&fields[]=Activity+Log` +
+        `&fields[]=Invoice+Number&fields[]=Balance+Due&fields[]=Due+Date&fields[]=Issue+Date&fields[]=Days+Overdue` +
+        `&fields[]=Projects&fields[]=Client&fields[]=Triage+Status&fields[]=Triage+Due+Date` +
         `&sort[0][field]=Days+Overdue&sort[0][direction]=desc` +
         (offset ? `&offset=${offset}` : '');
       const res = await fetch(url, { headers: { Authorization: `Bearer ${gApiToken}` } });
@@ -3466,25 +3475,25 @@ async function loadTriage() {
       (d.records || []).forEach(r => { projNames[r.id] = r.fields['Project Name'] || r.id; });
     }
 
-    // Resolve client names
+    // Resolve client names + IDs
     const clientIds = [...new Set(allInvoices.flatMap(r => r.fields['Client'] || []))];
-    const clientNames = {};
+    const clientNames = {}; const clientIdMap = {};
     for (let i = 0; i < clientIds.length; i += 100) {
       const batch = clientIds.slice(i, i+100);
       const f = encodeURIComponent(`OR(${batch.map(id => `RECORD_ID()="${id}"`).join(',')})`);
       const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Clients?filterByFormula=${f}&fields[]=Client+Name`, { headers: { Authorization: `Bearer ${gApiToken}` } });
       const d = await res.json();
-      (d.records || []).forEach(r => { clientNames[r.id] = r.fields['Client Name'] || r.id; });
+      (d.records || []).forEach(r => { clientNames[r.id] = r.fields['Client Name'] || r.id; clientIdMap[r.fields['Client Name']] = r.id; });
     }
 
-    // Fetch all Activity Log notes per invoice
-    const invIds = allInvoices.map(r => r.id);
-    const activityByInv = {}; // id → array of note strings
-    const actionFilter = encodeURIComponent(`OR({Action Taken}="Note Added",{Action Taken}="Email Received")`);
+    // Fetch Activity Log notes (client-facing only)
+    arActivityByInv = {};
+    const actionFilter = encodeURIComponent('OR({Action Taken}="Note Added",{Action Taken}="Email Received")');
     let actOffset = '';
     do {
       const url = `https://api.airtable.com/v0/${gBaseId}/Activity%20Log?filterByFormula=${actionFilter}` +
-        `&fields[]=Invoices&fields[]=Date&fields[]=Notes&fields[]=Client+Contact&sort[0][field]=Date&sort[0][direction]=desc` +
+        `&fields[]=Invoices&fields[]=Date&fields[]=Notes&fields[]=Client+Contact` +
+        `&sort[0][field]=Date&sort[0][direction]=desc` +
         (actOffset ? `&offset=${actOffset}` : '');
       const res = await fetch(url, { headers: { Authorization: `Bearer ${gApiToken}` } });
       const data = await res.json();
@@ -3495,161 +3504,170 @@ async function loadTriage() {
         const contact = r.fields['Client Contact'] ? ` — ${r.fields['Client Contact'].replace(/\s*\(.*?\)/g, '').trim()}` : '';
         const entry = `${r.fields['Date'] || ''}: ${note}${contact}`;
         (r.fields['Invoices'] || []).forEach(id => {
-          if (!activityByInv[id]) activityByInv[id] = [];
-          activityByInv[id].push(entry);
+          if (!arActivityByInv[id]) arActivityByInv[id] = [];
+          arActivityByInv[id].push(entry);
         });
       });
       actOffset = data.offset || '';
     } while (actOffset);
 
-    // Build triageData grouped by client
-    triageData = {};
+    // Build arData grouped by client, track open actions
+    arData = {}; arOpenActions = {};
+    const today = new Date();
     allInvoices.forEach(r => {
       const f = r.fields;
       const invNum = String(f['Invoice Number'] || '').trim();
+      const balance = parseFloat(f['Balance Due'] || 0);
+      if (!invNum || balance <= 0) return;
       const clientId = (f['Client'] || [])[0];
-      const clientName = clientId ? (clientNames[clientId] || clientId) : 'Unknown Client';
+      const clientName = clientId ? (clientNames[clientId] || clientId) : 'Unknown';
       const projId = (f['Projects'] || [])[0];
-      const project = projId ? (projNames[projId] || '') : '';
-      if (!triageData[clientName]) triageData[clientName] = [];
-      triageData[clientName].push({
-        id: r.id,
-        invNum,
-        project,
-        balance: parseFloat(f['Balance Due'] || 0),
+      const issueDate = f['Issue Date'] || '';
+      const invoiceAge = issueDate ? Math.floor((today - new Date(issueDate)) / (1000*60*60*24)) : null;
+      if (f['Triage Status']) arOpenActions[r.id] = { status: f['Triage Status'], dueDate: f['Triage Due Date'] || '' };
+      if (!arData[clientName]) arData[clientName] = { invoices: [], clientId };
+      arData[clientName].invoices.push({
+        id: r.id, invNum, balance,
         due: f['Due Date'] || '',
         daysOverdue: parseInt(f['Days Overdue'] || 0),
-        triageStatus: f['Triage Status'] || '',
-        triageDueDate: f['Triage Due Date'] || '',
-        recentNote: activityByInv[r.id]?.[0] || '',
-        allNotes: activityByInv[r.id] || []
+        invoiceAge,
+        project: projId ? (projNames[projId] || '') : '',
+        clientName, clientId,
+        allNotes: arActivityByInv[r.id] || []
       });
     });
 
     // Populate client filter
-    const filterEl = document.getElementById('triageClientFilter');
+    const filterEl = document.getElementById('arClientFilter');
     filterEl.innerHTML = '<option value="">All Clients</option>';
-    Object.keys(triageData).sort().forEach(name => {
+    Object.keys(arData).sort().forEach(name => {
       filterEl.innerHTML += `<option value="${name}">${name}</option>`;
     });
 
-    renderTriageList();
-    showToast(`✓ Loaded ${allInvoices.length} past due invoices`, false, false);
+    renderAROverview();
+    const total = allInvoices.reduce((s,r) => s + parseFloat(r.fields['Balance Due']||0), 0);
+    showToast(`✓ ${allInvoices.length} invoices · $${fmt(total)} outstanding`, false, false);
   } catch(e) {
-    listEl.innerHTML = `<div style="color:var(--err);font-size:12px">Failed to load: ${e.message}</div>`;
+    listEl.innerHTML = `<div style="color:var(--err);font-size:12px">Failed: ${e.message}</div>`;
   }
 }
 
-function renderTriageList() {
-  const listEl = document.getElementById('triageList');
-  const filter = document.getElementById('triageClientFilter').value;
-  const clients = filter ? { [filter]: triageData[filter] } : triageData;
+function renderAROverview() {
+  const listEl = document.getElementById('arOverviewList');
+  const clientFilter = document.getElementById('arClientFilter').value;
+  const actionFilter = document.getElementById('arActionFilter').value;
+
+  let clients = clientFilter ? { [clientFilter]: arData[clientFilter] } : arData;
+  clients = Object.fromEntries(Object.entries(clients).filter(([,v]) => v));
 
   if (Object.keys(clients).length === 0) {
-    listEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:20px 0">No past due invoices found. Click Load to fetch from Airtable.</div>';
+    listEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:20px 0">No past due invoices. Click Load.</div>';
     return;
   }
 
   let html = '';
   Object.entries(clients).sort(([a],[b]) => {
-    const aMax = Math.max(...(triageData[a]||[]).map(i => i.daysOverdue));
-    const bMax = Math.max(...(triageData[b]||[]).map(i => i.daysOverdue));
+    const aMax = Math.max(...(arData[a]?.invoices||[]).map(i => i.daysOverdue));
+    const bMax = Math.max(...(arData[b]?.invoices||[]).map(i => i.daysOverdue));
     return bMax - aMax;
-  }).forEach(([clientName, invoices]) => {
+  }).forEach(([clientName, clientObj]) => {
+    let invoices = clientObj.invoices;
+
+    // Apply action filter
+    if (actionFilter === 'action') invoices = invoices.filter(i => arOpenActions[i.id]);
+    else if (actionFilter === 'none') invoices = invoices.filter(i => !arOpenActions[i.id]);
+    else if (actionFilter) invoices = invoices.filter(i => arOpenActions[i.id]?.status === actionFilter);
+    if (invoices.length === 0) return;
+
     const total = invoices.reduce((s,i) => s + i.balance, 0);
     const maxDays = Math.max(...invoices.map(i => i.daysOverdue));
-    const statusCounts = TRIAGE_STATUSES.reduce((acc, s) => {
-      acc[s] = invoices.filter(i => i.triageStatus === s).length;
-      return acc;
-    }, {});
-    const untriaged = invoices.filter(i => !i.triageStatus).length;
+    const openCount = invoices.filter(i => arOpenActions[i.id]).length;
 
     html += `
     <div class="triage-client" style="margin-bottom:20px;border:1px solid var(--border);border-radius:4px;overflow:hidden">
-      <div style="padding:12px 16px;background:var(--surface2);display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleTriageClient('${escJs(clientName)}')">
+      <div style="padding:12px 16px;background:var(--surface2);display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleARClient('${escJs(clientName)}')">
         <div style="display:flex;align-items:center;gap:12px">
-          <span style="font-family:'Fraunces',serif;font-size:14px;font-weight:400">${clientName}</span>
+          <span style="font-family:'Fraunces',serif;font-size:14px">${clientName}</span>
           <span style="font-size:11px;color:var(--text-dim)">${invoices.length} invoice${invoices.length>1?'s':''} · $${fmt(total)}</span>
-          ${untriaged > 0 ? `<span style="font-size:10px;background:#e67e2220;color:#e67e22;padding:2px 6px;border-radius:10px">${untriaged} untriaged</span>` : '<span style="font-size:10px;background:#27ae6020;color:#27ae60;padding:2px 6px;border-radius:10px">✓ all triaged</span>'}
+          ${openCount > 0 ? `<span style="font-size:10px;background:#e67e2220;color:#e67e22;padding:2px 8px;border-radius:10px">${openCount} action${openCount>1?'s':''} open</span>` : ''}
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:10px;color:${maxDays>90?'#c0392b':maxDays>60?'#e67e22':'#f39c12'}">${maxDays} days overdue</span>
-          <span id="triage-chevron-${escJs(clientName)}" style="color:var(--text-dim)">▼</span>
+        <div style="display:flex;align-items:center;gap:12px">
+          <button onclick="event.stopPropagation();showQueueContacts('${clientObj.clientId}','${escJs(clientName)}')" style="padding:3px 8px;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:9px;border-radius:3px;cursor:pointer">👤 Contacts</button>
+          <span style="font-size:10px;color:${maxDays>90?'#c0392b':maxDays>60?'#e67e22':'#f39c12'}">${maxDays}d overdue</span>
+          <span id="ar-chevron-${escJs(clientName)}" style="color:var(--text-dim)">▼</span>
         </div>
       </div>
-      <div id="triage-body-${escJs(clientName)}" style="display:block">
+      <div id="ar-body-${escJs(clientName)}">
         <table style="width:100%;border-collapse:collapse;font-size:12px">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border)">
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:110px">Invoice</th>
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Project</th>
-              <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:100px">Balance</th>
-              <th style="padding:8px 12px;text-align:center;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:80px">Overdue</th>
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Latest Note</th>
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:200px">Triage Status</th>
-              <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:130px">Due By</th>
-            </tr>
-          </thead>
+          <thead><tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:100px">Invoice</th>
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Project</th>
+            <th style="padding:8px 12px;text-align:center;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:80px">Age</th>
+            <th style="padding:8px 12px;text-align:center;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:80px">Overdue</th>
+            <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:100px">Balance</th>
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em">Notes</th>
+            <th style="padding:8px 12px;text-align:center;font-size:10px;color:var(--text-dim);font-weight:500;text-transform:uppercase;letter-spacing:0.06em;width:160px">Action</th>
+          </tr></thead>
           <tbody>`;
 
     invoices.forEach(inv => {
       const overdueColor = inv.daysOverdue > 90 ? '#c0392b' : inv.daysOverdue > 60 ? '#e67e22' : '#f39c12';
-      const statusColor = TRIAGE_COLORS[inv.triageStatus] || 'var(--text-dim)';
-      const notePreview = inv.recentNote ? inv.recentNote.substring(0, 80) + (inv.recentNote.length > 80 ? '...' : '') : '';
+      const ageStr = inv.invoiceAge !== null ? `${inv.invoiceAge}d` : '—';
+      const recentNote = inv.allNotes[0] || '';
+      const notePreview = recentNote ? recentNote.substring(0, 70) + (recentNote.length > 70 ? '...' : '') : '';
       const noteCount = inv.allNotes.length;
       const noteCell = noteCount > 0
-        ? `<div onclick="showNoteHistory('${inv.id}')" style="cursor:pointer;padding:4px 6px;border-radius:3px;border:1px solid var(--border);background:var(--surface2)" title="Click to see full history">
-            <div style="font-size:10px;color:var(--text-dim)">${notePreview || '<span style="font-style:italic">click to view</span>'}</div>
-            ${noteCount > 1 ? `<div style="font-size:9px;color:var(--lf-accent);margin-top:3px">+${noteCount - 1} more note${noteCount > 2 ? 's' : ''} →</div>` : ''}
+        ? `<div onclick="showARNoteHistory('${inv.id}')" style="cursor:pointer;padding:4px 6px;border-radius:3px;border:1px solid var(--border);background:var(--surface2)" title="Click for full history">
+            <div style="font-size:10px;color:var(--text-dim);line-height:1.4">${notePreview}</div>
+            ${noteCount > 1 ? `<div style="font-size:9px;color:var(--accent);margin-top:2px">+${noteCount-1} more →</div>` : ''}
            </div>`
         : '<span style="color:var(--border);font-style:italic;font-size:10px">no notes</span>';
-      html += `
-            <tr style="border-bottom:1px solid var(--border)" id="triage-row-${inv.id}">
-              <td style="padding:10px 12px;font-family:monospace;font-size:11px">${inv.invNum}</td>
-              <td style="padding:10px 12px;font-size:11px;color:var(--text-dim);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${inv.project}</td>
-              <td style="padding:10px 12px;text-align:right;font-size:12px;font-weight:500;color:var(--accent)">$${fmt(inv.balance)}</td>
-              <td style="padding:10px 12px;text-align:center;font-size:11px;color:${overdueColor};font-weight:500">${inv.daysOverdue}d</td>
-              <td style="padding:10px 12px;font-size:10px;color:var(--text-dim);max-width:200px">${noteCell}</td>
-              <td style="padding:8px 12px">
-                <select id="triage-status-${inv.id}" onchange="saveTriage('${inv.id}', this.value, '${escJs(clientName)}')" style="width:100%;padding:5px 8px;background:var(--surface);border:1px solid ${statusColor};color:${statusColor};font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer">
-                  <option value="">— select —</option>
-                  ${TRIAGE_STATUSES.map(s => `<option value="${s}" ${inv.triageStatus===s?'selected':''}>${s}</option>`).join('')}
-                </select>
-              </td>
-              <td style="padding:8px 12px">
-                <input type="date" id="triage-due-${inv.id}" value="${inv.triageDueDate || ''}" onchange="saveTriage('${inv.id}', document.getElementById('triage-status-${inv.id}').value, '${escJs(clientName)}')" style="padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;width:100%" />
-              </td>
-            </tr>`;
+      const openAction = arOpenActions[inv.id];
+      const actionCell = openAction
+        ? `<div style="text-align:center">
+            <span style="font-size:10px;padding:3px 8px;border-radius:10px;background:${ACTION_COLORS[openAction.status]||'#7a7870'}20;color:${ACTION_COLORS[openAction.status]||'#7a7870'}">${openAction.status}</span>
+            ${openAction.dueDate ? `<div style="font-size:9px;color:var(--text-dim);margin-top:3px">due ${new Date(openAction.dueDate+'T12:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric'})}</div>` : ''}
+           </div>`
+        : `<button onclick="showAssignAction('${inv.id}','${escJs(inv.invNum)}','${escJs(clientName)}')" style="padding:4px 10px;background:var(--surface2);border:1px dashed var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer;white-space:nowrap">+ Assign Action</button>`;
+
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:10px 12px;font-family:monospace;font-size:11px">${inv.invNum}</td>
+        <td style="padding:10px 12px;font-size:11px;color:var(--text-dim);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${inv.project}</td>
+        <td style="padding:10px 12px;text-align:center;font-size:11px;color:var(--text-dim)">${ageStr}</td>
+        <td style="padding:10px 12px;text-align:center;font-size:11px;color:${overdueColor};font-weight:500">${inv.daysOverdue}d</td>
+        <td style="padding:10px 12px;text-align:right;font-size:12px;font-weight:500;color:var(--accent)">$${fmt(inv.balance)}</td>
+        <td style="padding:8px 12px;max-width:220px">${noteCell}</td>
+        <td style="padding:8px 12px;text-align:center">${actionCell}</td>
+      </tr>`;
     });
 
     html += `</tbody></table></div></div>`;
   });
 
-  listEl.innerHTML = html;
+  listEl.innerHTML = html || '<div style="color:var(--text-dim);font-size:12px;padding:20px 0">No invoices match the selected filter.</div>';
 }
 
-function showNoteHistory(invoiceId) {
-  // Find invoice in triageData
+function toggleARClient(clientName) {
+  const body = document.getElementById(`ar-body-${clientName}`);
+  const chevron = document.getElementById(`ar-chevron-${clientName}`);
+  if (!body) return;
+  if (body.style.display === 'none') { body.style.display = 'block'; chevron.textContent = '▼'; }
+  else { body.style.display = 'none'; chevron.textContent = '▶'; }
+}
+
+function showARNoteHistory(invoiceId) {
   let inv = null;
-  for (const invoices of Object.values(triageData)) {
-    inv = invoices.find(i => i.id === invoiceId);
+  for (const client of Object.values(arData)) {
+    inv = client.invoices.find(i => i.id === invoiceId);
     if (inv) break;
   }
   if (!inv) return;
-
   const modal = document.createElement('div');
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
   modal.onclick = e => { if (e.target === modal) modal.remove(); };
-
   const notesHtml = inv.allNotes.length > 0
-    ? inv.allNotes.map((note, i) => {
-        const isLast = i === inv.allNotes.length - 1;
-        return `<div style="padding:10px 0;${isLast ? '' : 'border-bottom:1px solid var(--border)'}">
-          <div style="font-size:11px;color:var(--text);line-height:1.6">${note}</div>
-        </div>`;
-      }).join('')
+    ? inv.allNotes.map((note, i) => `<div style="padding:10px 0;${i<inv.allNotes.length-1?'border-bottom:1px solid var(--border)':''};font-size:11px;color:var(--text);line-height:1.6">${note}</div>`).join('')
     : '<div style="color:var(--text-dim);font-size:12px">No notes recorded.</div>';
-
   modal.innerHTML = `
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:24px;max-width:560px;width:100%;max-height:80vh;overflow-y:auto">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -3657,39 +3675,52 @@ function showNoteHistory(invoiceId) {
           <div style="font-family:'Fraunces',serif;font-weight:300;font-size:16px">${inv.invNum}</div>
           <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${inv.project} · $${fmt(inv.balance)}</div>
         </div>
-        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;padding:4px">✕</button>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer">✕</button>
       </div>
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:8px">Note History (${inv.allNotes.length})</div>
       ${notesHtml}
     </div>`;
-
   document.body.appendChild(modal);
 }
 
-function toggleTriageClient(clientName) {
-  const body = document.getElementById(`triage-body-${clientName}`);
-  const chevron = document.getElementById(`triage-chevron-${clientName}`);
-  if (body.style.display === 'none') {
-    body.style.display = 'block';
-    chevron.textContent = '▼';
-  } else {
-    body.style.display = 'none';
-    chevron.textContent = '▶';
-  }
+function showAssignAction(invoiceId, invNum, clientName) {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:24px;max-width:400px;width:100%">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <div>
+          <div style="font-family:'Fraunces',serif;font-weight:300;font-size:16px">Assign Action</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${invNum} · ${clientName}</div>
+        </div>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer">✕</button>
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);display:block;margin-bottom:6px">Action Type</label>
+        <select id="assign-status" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">
+          <option value="Call Client">Call Client</option>
+          <option value="Threaten Collections">Threaten Collections</option>
+          <option value="Send to Collections">Send to Collections</option>
+        </select>
+      </div>
+      <div style="margin-bottom:20px">
+        <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);display:block;margin-bottom:6px">Due By</label>
+        <input type="date" id="assign-due" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box" />
+      </div>
+      <button onclick="saveAssignAction('${invoiceId}','${escJs(clientName)}')" style="width:100%;padding:10px;background:#2d4a3e;color:#e8e4d8;border:none;font-family:'DM Mono',monospace;font-size:12px;border-radius:3px;cursor:pointer">
+        Assign →
+      </button>
+    </div>`;
+  document.body.appendChild(modal);
 }
 
-async function saveTriage(invoiceId, status, clientName) {
-  if (!gApiToken || !gBaseId) return;
-  const dueDateEl = document.getElementById(`triage-due-${invoiceId}`);
-  const dueDate = dueDateEl ? dueDateEl.value : '';
-
-  // Check if status actually changed
-  const client = triageData[clientName];
-  const inv = client ? client.find(i => i.id === invoiceId) : null;
-  const statusChanged = inv && inv.triageStatus !== status;
-
+async function saveAssignAction(invoiceId, clientName) {
+  const status = document.getElementById('assign-status').value;
+  const dueDate = document.getElementById('assign-due').value;
+  if (!status) return;
   try {
-    const fields = { 'Triage Status': status || null };
+    const fields = { 'Triage Status': status };
     if (dueDate) fields['Triage Due Date'] = dueDate;
     const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Invoices/${invoiceId}`, {
       method: 'PATCH',
@@ -3699,27 +3730,21 @@ async function saveTriage(invoiceId, status, clientName) {
     const data = await res.json();
     if (!data.id) throw new Error(data.error?.message || 'Save failed');
 
-    // Update local data
-    if (inv) { inv.triageStatus = status; inv.triageDueDate = dueDate; }
+    // Log to Activity Log
+    await atPost('Activity Log', {
+      'Invoices': [invoiceId],
+      'Date': new Date().toISOString().split('T')[0],
+      'Action Taken': 'Note Added',
+      'Notes': `Action assigned: ${status}${dueDate ? ' — due by ' + dueDate : ''}`,
+      'Follow-up Required': true,
+      'Next Step Due?': dueDate || null
+    });
 
-    // Only log to Activity Log when status actually changes
-    if (status && statusChanged) {
-      const noteText = `Triage: ${status}${dueDate ? ` — due by ${dueDate}` : ''}`;
-      await atPost('Activity Log', {
-        'Invoices': [invoiceId],
-        'Date': new Date().toISOString().split('T')[0],
-        'Action Taken': 'Note Added',
-        'Notes': noteText,
-        'Follow-up Required': true,
-        'Next Step Due?': dueDate || null
-      });
-    }
-
-    showToast(`✓ Saved: ${status || 'cleared'}${dueDate ? ` · due ${dueDate}` : ''}`, false, false);
-    renderTriageList();
-  } catch(e) {
-    showToast(`✗ Save failed: ${e.message}`, true, false);
-  }
+    arOpenActions[invoiceId] = { status, dueDate };
+    document.querySelector('[style*="position:fixed"][style*="z-index:1000"]')?.remove();
+    showToast(`✓ Action assigned: ${status}`, false, false);
+    renderAROverview();
+  } catch(e) { showToast(`✗ ${e.message}`, true, false); }
 }
 </script>
 
