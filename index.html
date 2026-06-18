@@ -1492,10 +1492,20 @@ async function selectClient(id, name) {
 
 async function loadClientInvoices(clientId) {
   try {
-    // Fetch all unpaid/partially paid invoices for this client
-    const formula = encodeURIComponent(`AND(OR({Status}="Unpaid",{Status}="Partially Paid"),FIND("${clientId}",ARRAYJOIN({Client},",")))`);
-    const data = await atFetch(TABLE_INVOICES, `?filterByFormula=${formula}&fields[]=Invoice+Number&fields[]=Balance+Due&fields[]=Status&fields[]=Days+Overdue&fields[]=Projects&sort[0][field]=Invoice+Number&sort[0][direction]=asc`);
-    projectInvoices = data.records || [];
+    // Fetch all unpaid/partially paid invoices then filter client-side by client ID
+    const formula = encodeURIComponent(`OR({Status}="Unpaid",{Status}="Partially Paid")`);
+    let allRecords = [], offset = '';
+    do {
+      const data = await atFetch(TABLE_INVOICES, `?filterByFormula=${formula}&fields[]=Invoice+Number&fields[]=Balance+Due&fields[]=Status&fields[]=Days+Overdue&fields[]=Projects&fields[]=Client&sort[0][field]=Invoice+Number&sort[0][direction]=asc${offset?'&offset='+offset:''}`);
+      allRecords = allRecords.concat(data.records || []);
+      offset = data.offset || '';
+    } while (offset);
+
+    // Filter client-side by matching client ID in linked field
+    projectInvoices = allRecords.filter(r => {
+      const cf = r.fields['Client'] || [];
+      return (Array.isArray(cf) ? cf : [cf]).includes(clientId);
+    });
     const list = document.getElementById('invoiceList');
     if (projectInvoices.length === 0) { list.innerHTML = '<div class="inv-loading">No open invoices found</div>'; return; }
 
@@ -1552,12 +1562,13 @@ function toggleProjectGroup(projId) {
 
 async function loadClientHistory(clientId) {
   try {
-    // Load history for all invoices belonging to this client
     const ids = projectInvoices.map(i => i.id);
     if (ids.length === 0) { document.getElementById('historyContent').innerHTML = '<div class="hist-empty">No invoices found</div>'; return; }
-    const formula = encodeURIComponent(`OR(${ids.map(id=>`FIND("${id}",ARRAYJOIN({Invoices},","))`).join(',')})`);
-    const data = await atFetch(TABLE_ACTIVITY, `?filterByFormula=${formula}&fields[]=Date&fields[]=Action+Taken&fields[]=Client+Contact&fields[]=Notes&fields[]=Next+Steps&fields[]=Next+Step+Due?&fields[]=Performed+By&sort[0][field]=Date&sort[0][direction]=desc&maxRecords=10`);
-    renderHistory(data.records || []);
+    // Fetch all recent activity and filter client-side by invoice IDs
+    const data = await atFetch(TABLE_ACTIVITY, `?fields[]=Invoices&fields[]=Date&fields[]=Action+Taken&fields[]=Client+Contact&fields[]=Notes&fields[]=Next+Steps&fields[]=Next+Step+Due?&fields[]=Performed+By&sort[0][field]=Date&sort[0][direction]=desc&maxRecords=100`);
+    const idSet = new Set(ids);
+    const filtered = (data.records || []).filter(r => (r.fields['Invoices'] || []).some(id => idSet.has(id)));
+    renderHistory(filtered.slice(0, 10));
   } catch(e) { document.getElementById('historyContent').innerHTML = `<div class="hist-empty" style="color:var(--lf-danger)">Error: ${e.message}</div>`; }
 }
 
@@ -3740,7 +3751,6 @@ async function saveAssignAction(invoiceId, clientName) {
     const data = await res.json();
     if (!data.id) throw new Error(data.error?.message || 'Save failed');
 
-    // Log to Activity Log
     await atPost('Activity Log', {
       'Invoices': [invoiceId],
       'Date': new Date().toISOString().split('T')[0],
