@@ -2313,7 +2313,7 @@ async function loadStmtFromAirtable() {
           const contactRaw = r.fields['Client Contact'];
           const contactName = typeof contactRaw === 'string' ? contactRaw.replace(/\s*\(.*?\)\s*/g, '').trim() : (Array.isArray(contactRaw) ? contactNames[contactRaw[0]] || '' : '');
           const by = contactName ? ` --${contactName}` : '';
-          if (!note) return;
+          if (!note || note.startsWith('Triage:') || note.startsWith('Action assigned:')) return;
           linkedInvIds.forEach(id => {
             const invNum = invIdToNum[id];
             if (!invNum) return;
@@ -3501,8 +3501,11 @@ async function loadAROverview() {
       (data.records || []).forEach(r => {
         const note = String(r.fields['Notes'] || '').trim();
         if (!note) return;
+        const isInternal = note.startsWith('Triage:') || note.startsWith('Action assigned:');
         const contact = r.fields['Client Contact'] ? ` — ${r.fields['Client Contact'].replace(/\s*\(.*?\)/g, '').trim()}` : '';
-        const entry = `${r.fields['Date'] || ''}: ${note}${contact}`;
+        const entry = isInternal
+          ? `[INTERNAL] ${r.fields['Date'] || ''}: ${note}`
+          : `${r.fields['Date'] || ''}: ${note}${contact}`;
         (r.fields['Invoices'] || []).forEach(id => {
           if (!arActivityByInv[id]) arActivityByInv[id] = [];
           arActivityByInv[id].push(entry);
@@ -3666,7 +3669,14 @@ function showARNoteHistory(invoiceId) {
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
   modal.onclick = e => { if (e.target === modal) modal.remove(); };
   const notesHtml = inv.allNotes.length > 0
-    ? inv.allNotes.map((note, i) => `<div style="padding:10px 0;${i<inv.allNotes.length-1?'border-bottom:1px solid var(--border)':''};font-size:11px;color:var(--text);line-height:1.6">${note}</div>`).join('')
+    ? inv.allNotes.map((note, i) => {
+        const isInt = note.startsWith('[INTERNAL]');
+        const dn = isInt ? note.replace('[INTERNAL] ', '') : note;
+        return `<div style="padding:10px 0;${i<inv.allNotes.length-1?'border-bottom:1px solid var(--border)':''}">
+          ${isInt ? `<span style="font-size:9px;background:#e67e2220;color:#e67e22;padding:1px 6px;border-radius:3px;text-transform:uppercase;letter-spacing:0.06em;display:inline-block;margin-bottom:4px">Internal</span>` : ''}
+          <div style="font-size:11px;color:${isInt?'var(--text-dim)':'var(--text)'};line-height:1.6">${dn}</div>
+        </div>`;
+      }).join('')
     : '<div style="color:var(--text-dim);font-size:12px">No notes recorded.</div>';
   modal.innerHTML = `
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:24px;max-width:560px;width:100%;max-height:80vh;overflow-y:auto">
@@ -3940,7 +3950,7 @@ async function loadQueue() {
           </tr></thead><tbody>`;
 
       items.forEach(inv => {
-        const statusColor = TRIAGE_COLORS[inv.triageStatus] || '#7a7870';
+        const statusColor = ACTION_COLORS[inv.triageStatus] || '#7a7870';
         const dueLabel = inv.triageDueDate ? new Date(inv.triageDueDate + 'T12:00:00').toLocaleDateString('en-US', {month:'numeric',day:'numeric',year:'2-digit'}) : '—';
         const dueColor = inv.daysUntilDue !== null && inv.daysUntilDue < 0 ? '#c0392b' : inv.daysUntilDue !== null && inv.daysUntilDue <= 3 ? '#e67e22' : 'var(--text-dim)';
         const sourceBadge = inv.source === 'followup' ? '<span style="font-size:9px;color:#7a7870;margin-left:4px">↩ follow-up</span>' : '';
