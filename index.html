@@ -3855,7 +3855,7 @@ async function saveBulkAssign(invoiceIds) {
   renderAROverview();
 }
 
-function clearARAction(invoiceId) {
+async function clearARAction(invoiceId) {
   if (!gApiToken || !gBaseId) return;
   try {
     const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Invoices/${invoiceId}`, {
