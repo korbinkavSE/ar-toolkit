@@ -1242,7 +1242,8 @@ async function runImport() {
     ...previewResult.conflictRows.map((row, i) => {
       // Apply conflict resolution: use incoming balance if user chose BT, otherwise keep AT
       const res = conflictResolutions[i];
-      const useIncoming = !res || !res['Balance Due'] || res['Balance Due'] === 'incoming';
+      // res['Balance Due'] is 'use' (use import) or 'keep' (keep AT). Default to 'use' if not resolved.
+      const useIncoming = !res || !res['Balance Due'] || res['Balance Due'] === 'use';
       return { ...row, balance: useIncoming ? row.balance : existingInvoices[row.invoiceNumber]?.balance };
     })
   ].filter(r => r.existingId || existingInvoices[r.invoiceNumber]?.id);
@@ -3449,7 +3450,7 @@ function printStatement() {
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
     <div>
       <div style="font-family:'Fraunces',serif;font-weight:300;font-size:20px;color:var(--text)">A/R Overview</div>
-      <div style="font-size:11px;color:var(--text-dim);margin-top:2px">All past due invoices — grouped by client</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:2px">All unpaid invoices — grouped by client</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <select id="arClientFilter" style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" onchange="renderAROverview()">
@@ -3506,7 +3507,7 @@ async function loadAROverview() {
 
   try {
     // Fetch all past due invoices
-    const filter = encodeURIComponent('AND(OR({Status}="Unpaid",{Status}="Partially Paid"),{Days Overdue}>0)');
+    const filter = encodeURIComponent('OR({Status}="Unpaid",{Status}="Partially Paid")');
     let allInvoices = [], offset = '';
     do {
       const url = `https://api.airtable.com/v0/${gBaseId}/Invoices?filterByFormula=${filter}` +
