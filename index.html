@@ -3790,6 +3790,7 @@ function showBulkAssign(clientName) {
     return;
   }
   const invoiceIds = checked.map(cb => cb.dataset.invid);
+  window._bulkInvoiceIds = invoiceIds;
 
   const modal = document.createElement('div');
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
@@ -3817,7 +3818,7 @@ function showBulkAssign(clientName) {
         <label style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);display:block;margin-bottom:6px">Due By</label>
         <input type="date" id="bulk-due" style="width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box" />
       </div>
-      <button id="bulk-assign-btn" onclick="saveBulkAssign(${JSON.stringify(invoiceIds)})" style="width:100%;padding:10px;background:#2d4a3e;color:#e8e4d8;border:none;font-family:'DM Mono',monospace;font-size:12px;border-radius:3px;cursor:pointer">
+      <button id="bulk-assign-btn" onclick="saveBulkAssign(window._bulkInvoiceIds)" style="width:100%;padding:10px;background:#2d4a3e;color:#e8e4d8;border:none;font-family:'DM Mono',monospace;font-size:12px;border-radius:3px;cursor:pointer">
         Assign to ${invoiceIds.length} Invoice${invoiceIds.length>1?'s':''} →
       </button>
     </div>`;
