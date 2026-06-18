@@ -2325,7 +2325,7 @@ async function loadStmtFromAirtable() {
     } catch(e) { console.warn('Team Members fetch error:', e.message); }
 
     // Only show client-facing action types on statement
-    const clientFacingActions = ['Note Added', 'Email Received'];
+    const clientFacingActions = ['Note Added', 'Email Received', 'Phone Call'];
     const actionFilter = encodeURIComponent(
       `OR(${clientFacingActions.map(a => `{Action Taken}="${a}"`).join(',')})`
     );
@@ -3530,7 +3530,7 @@ async function loadAROverview() {
 
     // Fetch Activity Log notes (client-facing only)
     arActivityByInv = {};
-    const actionFilter = encodeURIComponent('OR({Action Taken}="Note Added",{Action Taken}="Email Received")');
+    const actionFilter = encodeURIComponent('OR({Action Taken}="Note Added",{Action Taken}="Email Received",{Action Taken}="Phone Call")');
     let actOffset = '';
     do {
       const url = `https://api.airtable.com/v0/${gBaseId}/Activity%20Log?filterByFormula=${actionFilter}` +
