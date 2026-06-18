@@ -3650,11 +3650,7 @@ function renderAROverview() {
   }
 
   let html = '';
-  Object.entries(clients).sort(([a],[b]) => {
-    const aMax = Math.max(...(arData[a]?.invoices||[]).map(i => i.daysOverdue));
-    const bMax = Math.max(...(arData[b]?.invoices||[]).map(i => i.daysOverdue));
-    return bMax - aMax;
-  }).forEach(([clientName, clientObj]) => {
+  Object.entries(clients).sort(([a],[b]) => a.localeCompare(b)).forEach(([clientName, clientObj]) => {
     let invoices = clientObj.invoices;
 
     // Apply action filter
