@@ -3695,6 +3695,7 @@ function renderAROverview() {
         ? `<div style="text-align:center">
             <span style="font-size:10px;padding:3px 8px;border-radius:10px;background:${ACTION_COLORS[openAction.status]||'#7a7870'}20;color:${ACTION_COLORS[openAction.status]||'#7a7870'}">${openAction.status}</span>
             ${openAction.dueDate ? `<div style="font-size:9px;color:var(--text-dim);margin-top:3px">due ${new Date(openAction.dueDate+'T12:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric'})}</div>` : ''}
+            <button onclick="clearARAction('${inv.id}')" style="margin-top:4px;padding:2px 8px;background:none;border:none;color:var(--text-dim);font-family:'DM Mono',monospace;font-size:9px;cursor:pointer;opacity:0.6" title="Clear action">✕ clear</button>
            </div>`
         : `<button onclick="showAssignAction('${inv.id}','${escJs(inv.invNum)}','${escJs(clientName)}')" style="padding:4px 10px;background:var(--surface2);border:1px dashed var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer;white-space:nowrap">+ Assign Action</button>`;
 
@@ -3756,6 +3757,24 @@ function showARNoteHistory(invoiceId) {
       ${notesHtml}
     </div>`;
   document.body.appendChild(modal);
+}
+
+async function clearARAction(invoiceId) {
+  if (!gApiToken || !gBaseId) return;
+  try {
+    const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Invoices/${invoiceId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${gApiToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { 'Triage Status': null, 'Triage Due Date': null } })
+    });
+    const data = await res.json();
+    if (!data.id) throw new Error(data.error?.message || 'Failed');
+    delete arOpenActions[invoiceId];
+    showToast('✓ Action cleared', false, false);
+    renderAROverview();
+  } catch(e) {
+    showToast(`✗ ${e.message}`, true, false);
+  }
 }
 
 function showAssignAction(invoiceId, invNum, clientName) {
