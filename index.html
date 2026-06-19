@@ -4008,6 +4008,8 @@ async function bulkAssignAction() {
       if (data.id) {
         arOpenActions[invId] = { status, dueDate, source: 'triage' };
         done++;
+      } else {
+        console.warn('Bulk assign failed for', invId, data.error || data);
       }
     } catch(e) { console.warn('Bulk assign error:', e.message); }
   }
