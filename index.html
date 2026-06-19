@@ -3650,7 +3650,17 @@ function renderAROverview() {
   }
 
   let html = '';
-  Object.entries(clients).sort(([a],[b]) => a.localeCompare(b)).forEach(([clientName, clientObj]) => {
+  let clientEntries = Object.entries(clients).sort(([a],[b]) => a.localeCompare(b));
+  if (actionFilter === 'action' || (actionFilter && actionFilter !== 'none')) {
+    clientEntries = clientEntries.sort(([,aObj],[,bObj]) => {
+      const earliest = obj => {
+        const dates = obj.invoices.map(i => arOpenActions[i.id]?.dueDate).filter(Boolean);
+        return dates.length ? Math.min(...dates.map(d => new Date(d).getTime())) : Infinity;
+      };
+      return earliest(aObj) - earliest(bObj);
+    });
+  }
+  clientEntries.forEach(([clientName, clientObj]) => {
     let invoices = clientObj.invoices;
 
     // Apply action filter
@@ -3790,6 +3800,7 @@ function showBulkAssign(clientName) {
   window._bulkInvoiceIds = invoiceIds;
 
   const modal = document.createElement('div');
+  modal.id = 'bulk-assign-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
   modal.onclick = e => { if (e.target === modal) modal.remove(); };
   modal.innerHTML = `
@@ -3848,7 +3859,7 @@ async function saveBulkAssign(invoiceIds) {
     } catch(e) { console.warn('Bulk assign error:', e.message); }
   }
 
-  document.querySelector('[style*="position:fixed"][style*="z-index:1000"]')?.remove();
+  document.getElementById('bulk-assign-modal')?.remove();
   showToast(`✓ Action assigned to ${saved} invoice${saved>1?'s':''}`, false, false);
   renderAROverview();
 }
