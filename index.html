@@ -2562,7 +2562,7 @@ function renderStmtClientList() {
     return;
   }
 
-  stmtData.clients.sort((a, b) => a.localeCompare(b));
+  stmtData.clients.sort((a, b) => a.name.localeCompare(b.name));
 
   const bulkBar = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:3px">
