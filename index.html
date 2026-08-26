@@ -3096,6 +3096,17 @@ async function uploadStatementToDrive(clientName) {
   const fullHTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0.5in;font-family:Helvetica Neue,Arial,sans-serif}@media print{@page{margin:0.5in}}</style></head><body>${stmtHTML}</body></html>`;
 
   try {
+    // Step 0: Return existing file link if already uploaded today (avoid duplicates)
+    const searchRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${filename}' and '${DRIVE_FOLDER_ID}' in parents and trashed=false`)}&fields=files(id,webViewLink)&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+      { headers: { Authorization: `Bearer ${driveToken}` } }
+    );
+    const searchData = await searchRes.json();
+    if (searchData.files?.length > 0) {
+      console.log('Drive file already exists, reusing:', searchData.files[0].webViewLink);
+      return searchData.files[0].webViewLink;
+    }
+
     // Step 1: Create file metadata with parent folder
     const metaRes = await fetch('https://www.googleapis.com/drive/v3/files?fields=id&supportsAllDrives=true', {
       method: 'POST',
