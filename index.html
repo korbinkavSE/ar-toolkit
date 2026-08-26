@@ -2797,6 +2797,7 @@ let _currentEmailDraftResolve = null;
 let _currentDriveLink = null;
 
 function _resolveEmailDraft() {
+  console.log('[emailDraft] _resolveEmailDraft called', new Error().stack?.split('\n')[1]?.trim());
   document.getElementById('emailDraftModal')?.remove();
   if (_currentEmailDraftResolve) { _currentEmailDraftResolve(); _currentEmailDraftResolve = null; }
 }
@@ -2931,8 +2932,9 @@ accounting@shakespeare-eng.com
 }
 
 async function draftEmail(clientName) {
+  console.log('[emailDraft] draftEmail START', clientName);
   const client = stmtData.all[clientName];
-  if (!client) return;
+  if (!client) { console.log('[emailDraft] no client data, returning early'); return; }
 
   _currentDriveLink = null;
   const driveToken = getDriveToken();
@@ -2949,8 +2951,15 @@ async function draftEmail(clientName) {
   modal.innerHTML = '<div style="color:var(--text-dim);font-size:11px;font-family:\'DM Mono\',monospace">Loading...</div>';
   document.body.appendChild(modal);
 
-  await _renderEmailDraftInModal(clientName, modal);
+  try {
+    await _renderEmailDraftInModal(clientName, modal);
+  } catch(e) {
+    console.error('[emailDraft] _renderEmailDraftInModal threw for', clientName, e);
+    _resolveEmailDraft();
+    return;
+  }
 
+  console.log('[emailDraft] draftEmail awaiting user close for', clientName);
   return new Promise(resolve => { _currentEmailDraftResolve = resolve; });
 }
 
