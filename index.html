@@ -2789,18 +2789,30 @@ async function markStatementSent(clientName, balance, maxDays) {
   renderStmtClientList();
 }
 
-async function draftEmail(clientName) {
+// ─── Email draft modal state ─────────────────────────────────────────────────
+// draftEmail() returns a Promise; _resolveEmailDraft() closes the modal and
+// resolves it. bulkDraftEmails() awaits each call so clients are handled one
+// at a time instead of all at once.
+let _currentEmailDraftResolve = null;
+let _currentDriveLink = null;
+
+function _resolveEmailDraft() {
+  document.getElementById('emailDraftModal')?.remove();
+  if (_currentEmailDraftResolve) { _currentEmailDraftResolve(); _currentEmailDraftResolve = null; }
+}
+
+// Populates an existing modal element with either the no-contact form or the
+// full email draft. Called by draftEmail() on first open and by
+// saveNewContactAndDraft() when transitioning from the contact form to the draft.
+async function _renderEmailDraftInModal(clientName, modal) {
   const client = stmtData.all[clientName];
-  if (!client) return;
   const today = new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
   const total = client.total.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
 
-  // Look up AP contacts for this client from Airtable
   let toEmail = '';
   let greeting = clientName;
   if (gApiToken && gBaseId) {
     try {
-      // Get ALL contacts for this client - let user choose who to send to
       const formula = encodeURIComponent(`FIND("${clientName}",ARRAYJOIN({Client},","))`);
       const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Contacts?filterByFormula=${formula}&fields[]=Name&fields[]=Email&fields[]=Role&sort[0][field]=Role&sort[0][direction]=asc`, {
         headers: { Authorization: `Bearer ${gApiToken}` }
@@ -2808,9 +2820,7 @@ async function draftEmail(clientName) {
       const data = await res.json();
       const contacts = data.records || [];
       if (contacts.length > 0) {
-        // Store all contacts for selection UI
         window._emailContacts = contacts;
-        // Default: prefer AP Team, fall back to first contact
         const defaultContact = contacts.find(c => c.fields.Role === 'AP Team') || contacts[0];
         toEmail = defaultContact.fields.Email || '';
         greeting = defaultContact.fields.Name?.split(' ')[0] || clientName;
@@ -2821,15 +2831,7 @@ async function draftEmail(clientName) {
   }
 
   const subject = `Shakespeare Engineering Invoice Statement`;
-  // Try to upload to Drive first
-  let driveLink = null;
-  const driveToken = getDriveToken();
-  if (driveToken) {
-    showToast('Uploading statement to Drive...', false, false);
-    driveLink = await uploadStatementToDrive(clientName);
-    if (driveLink) showToast('✓ Statement uploaded to Drive', false, false);
-  }
-
+  const driveLink = _currentDriveLink;
   const attachmentLine = driveLink
     ? `Here is a link to ${clientName}'s invoice statement: ${driveLink}`
     : `Here is ${clientName}'s invoice statement as of ${today} (see attached).`;
@@ -2854,82 +2856,102 @@ Shakespeare Engineering A/R Team
 accounting@shakespeare-eng.com
 435-253-7200`;
 
+  if (!toEmail) {
+    modal.innerHTML = `
+      <div id="addContactPrompt" style="background:#1a1a17;border:1px solid var(--border);border-radius:4px;padding:24px;max-width:480px;width:100%">
+        <div style="font-family:'Fraunces',serif;font-size:16px;color:var(--text);margin-bottom:6px">No contact on file</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:20px">Add a billing contact for <strong style="color:var(--text)">${clientName}</strong> to continue</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Name *</div>
+            <input id="newContactName" placeholder="Full name" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box" />
+          </div>
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Role *</div>
+            <select id="newContactRole" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box">
+              <option value="">Select...</option>
+              <option value="AP Team">AP Team</option>
+              <option value="Principal">Principal</option>
+              <option value="Owner">Owner</option>
+              <option value="Project Manager">Project Manager</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Email *</div>
+            <input id="newContactEmail" type="email" placeholder="email@company.com" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box" />
+          </div>
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Phone</div>
+            <input id="newContactPhone" placeholder="Optional" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box" />
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button onclick="_resolveEmailDraft()" style="padding:8px 16px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Skip</button>
+          <button onclick="saveNewContactAndDraft('${escJs(clientName)}')" style="padding:8px 16px;background:var(--lf-accent);color:white;border:none;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Save & Continue →</button>
+        </div>
+      </div>`;
+  } else {
+    modal.innerHTML = `
+      <div style="background:#1a1a17;border:1px solid var(--border);border-radius:4px;padding:24px;max-width:640px;width:100%;max-height:80vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div style="font-family:'Fraunces',serif;font-size:16px;color:var(--text)">Draft Email — ${clientName}</div>
+          <button onclick="_resolveEmailDraft()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer">×</button>
+        </div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">To</div>
+          ${window._emailContacts?.length > 1 ? `
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+            ${window._emailContacts.map(c => `
+              <label style="display:flex;align-items:center;gap:5px;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;color:var(--text)">
+                <input type="checkbox" value="${c.fields.Email || ''}" data-name="${c.fields.Name || ''}" class="contact-pick" onchange="updateEmailTo()" style="accent-color:var(--lf-accent)" ${c.fields.Role === 'AP Team' || window._emailContacts.indexOf(c) === 0 ? 'checked' : ''} />
+                ${c.fields.Name} <span style="color:var(--text-dim);font-size:10px">(${c.fields.Role})</span>
+              </label>`).join('')}
+          </div>` : ''}
+          <input id="emailTo" value="${toEmail}" placeholder="AP contact email(s)" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
+          <div style="font-size:10px;color:var(--text-dim);margin-top:4px">From Airtable Contacts — edit if needed</div>
+        </div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Subject</div>
+          <input id="emailSubject" value="${subject}" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
+        </div>
+        <div style="margin-bottom:16px">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Body</div>
+          <textarea id="emailBody" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;height:260px;resize:vertical">${body}</textarea>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button onclick="_resolveEmailDraft()" style="padding:8px 16px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Cancel</button>
+          <button onclick="copyEmailToClipboard()" style="padding:8px 16px;background:var(--lf-accent);color:white;border:none;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Copy Body</button>
+          <button onclick="createGmailDraft()" style="padding:8px 16px;background:#8B0000;color:white;border:none;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">✉ Create Gmail Draft</button>
+        </div>
+      </div>`;
+  }
+}
+
+async function draftEmail(clientName) {
+  const client = stmtData.all[clientName];
+  if (!client) return;
+
+  _currentDriveLink = null;
+  const driveToken = getDriveToken();
+  if (driveToken) {
+    showToast('Uploading statement to Drive...', false, false);
+    _currentDriveLink = await uploadStatementToDrive(clientName);
+    if (_currentDriveLink) showToast('✓ Statement uploaded to Drive', false, false);
+  }
+
   const modal = document.createElement('div');
   modal.id = 'emailDraftModal';
   modal.setAttribute('data-client', clientName);
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
-  
-  const noContactForm = !toEmail ? `
-    <div id="addContactPrompt" style="background:#1a1a17;border:1px solid var(--border);border-radius:4px;padding:24px;max-width:480px;width:100%">
-      <div style="font-family:'Fraunces',serif;font-size:16px;color:var(--text);margin-bottom:6px">No contact on file</div>
-      <div style="font-size:11px;color:var(--text-dim);margin-bottom:20px">Add a billing contact for <strong style="color:var(--text)">${clientName}</strong> to continue</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-        <div>
-          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Name *</div>
-          <input id="newContactName" placeholder="Full name" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box" />
-        </div>
-        <div>
-          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Role *</div>
-          <select id="newContactRole" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box">
-            <option value="">Select...</option>
-            <option value="AP Team">AP Team</option>
-            <option value="Principal">Principal</option>
-            <option value="Owner">Owner</option>
-            <option value="Project Manager">Project Manager</option>
-            <option value="Other">Other</option>
-          </select>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
-        <div>
-          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Email *</div>
-          <input id="newContactEmail" type="email" placeholder="email@company.com" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box" />
-        </div>
-        <div>
-          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Phone</div>
-          <input id="newContactPhone" placeholder="Optional" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;box-sizing:border-box" />
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button onclick="document.getElementById('emailDraftModal')?.remove()" style="padding:8px 16px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Cancel</button>
-        <button onclick="saveNewContactAndDraft('${escJs(clientName)}')" style="padding:8px 16px;background:var(--lf-accent);color:white;border:none;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Save & Continue →</button>
-      </div>
-    </div>` : '';
-
-  modal.innerHTML = noContactForm || `
-    <div style="background:#1a1a17;border:1px solid var(--border);border-radius:4px;padding:24px;max-width:640px;width:100%;max-height:80vh;overflow-y:auto">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <div style="font-family:'Fraunces',serif;font-size:16px;color:var(--text)">Draft Email — ${clientName}</div>
-        <button onclick="document.getElementById('emailDraftModal')?.remove()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer">×</button>
-      </div>
-      <div style="margin-bottom:10px">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">To</div>
-        ${window._emailContacts?.length > 1 ? `
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-          ${window._emailContacts.map(c => `
-            <label style="display:flex;align-items:center;gap:5px;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;color:var(--text)">
-              <input type="checkbox" value="${c.fields.Email || ''}" data-name="${c.fields.Name || ''}" class="contact-pick" onchange="updateEmailTo()" style="accent-color:var(--lf-accent)" ${c.fields.Role === 'AP Team' || window._emailContacts.indexOf(c) === 0 ? 'checked' : ''} />
-              ${c.fields.Name} <span style="color:var(--text-dim);font-size:10px">(${c.fields.Role})</span>
-            </label>`).join('')}
-        </div>` : ''}
-        <input id="emailTo" value="${toEmail}" placeholder="AP contact email(s)" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
-        <div style="font-size:10px;color:var(--text-dim);margin-top:4px">From Airtable Contacts — edit if needed</div>
-      </div>
-      <div style="margin-bottom:10px">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Subject</div>
-        <input id="emailSubject" value="${subject}" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
-      </div>
-      <div style="margin-bottom:16px">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:4px">Body</div>
-        <textarea id="emailBody" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;height:260px;resize:vertical">${body}</textarea>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button onclick="document.getElementById('emailDraftModal')?.remove()" style="padding:8px 16px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Cancel</button>
-        <button onclick="copyEmailToClipboard()" style="padding:8px 16px;background:var(--lf-accent);color:white;border:none;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Copy Body</button>
-        <button onclick="createGmailDraft()" style="padding:8px 16px;background:#8B0000;color:white;border:none;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">✉ Create Gmail Draft</button>
-      </div>
-    </div>`;
+  modal.innerHTML = '<div style="color:var(--text-dim);font-size:11px;font-family:\'DM Mono\',monospace">Loading...</div>';
   document.body.appendChild(modal);
+
+  await _renderEmailDraftInModal(clientName, modal);
+
+  return new Promise(resolve => { _currentEmailDraftResolve = resolve; });
 }
 
 
@@ -2953,45 +2975,47 @@ async function saveNewContactAndDraft(clientName) {
   if (!role) { showToast('Role is required', true, false); return; }
   if (!email) { showToast('Email is required', true, false); return; }
 
-  // Find the client record ID
-  let clientId = null;
-  if (gApiToken && gBaseId) {
-    try {
-      const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Clients?filterByFormula=${encodeURIComponent(`{Client Name}="${clientName}"`)}&fields[]=Client+Name`, {
-        headers: { Authorization: `Bearer ${gApiToken}` }
-      });
-      const data = await res.json();
-      if (data.records?.[0]) clientId = data.records[0].id;
-    } catch(e) {}
-  }
-
-  // Save to Airtable
   if (!gApiToken || !gBaseId) {
     showToast('⚠ Not connected to Airtable — connect first to save contacts', true, false);
     return;
   }
-  if (gApiToken && gBaseId) {
-    try {
-      const fields = { 'Name': name, 'Role': role, 'Email': email };
-      if (phone) fields['Phone'] = phone;
-      if (clientId) fields['Client'] = [clientId];
-      const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Contacts`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${gApiToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields, typecast: true })
-      });
-      const data = await res.json();
-      if (!data.id) { showToast('Error saving contact: ' + JSON.stringify(data.error), true, false); return; }
-      showToast(`✓ ${name} added to Contacts`, false, false);
-    } catch(e) {
-      showToast('Error: ' + e.message, true, false);
-      return;
-    }
+
+  // Find the client record ID
+  let clientId = null;
+  try {
+    const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Clients?filterByFormula=${encodeURIComponent(`{Client Name}="${clientName}"`)}&fields[]=Client+Name`, {
+      headers: { Authorization: `Bearer ${gApiToken}` }
+    });
+    const data = await res.json();
+    if (data.records?.[0]) clientId = data.records[0].id;
+  } catch(e) {}
+
+  // Save to Airtable
+  try {
+    const fields = { 'Name': name, 'Role': role, 'Email': email };
+    if (phone) fields['Phone'] = phone;
+    if (clientId) fields['Client'] = [clientId];
+    const res = await fetch(`https://api.airtable.com/v0/${gBaseId}/Contacts`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${gApiToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields, typecast: true })
+    });
+    const data = await res.json();
+    if (!data.id) { showToast('Error saving contact: ' + JSON.stringify(data.error), true, false); return; }
+    showToast(`✓ ${name} added to Contacts`, false, false);
+  } catch(e) {
+    showToast('Error: ' + e.message, true, false);
+    return;
   }
 
-  // Close modal and reopen email draft with new contact
-  document.getElementById('emailDraftModal')?.remove();
-  await draftEmail(clientName);
+  // Transition the existing modal to the email draft — don't create a new Promise.
+  // The Promise from the original draftEmail() call is still pending and will
+  // resolve when the user dismisses the email draft.
+  const modal = document.getElementById('emailDraftModal');
+  if (modal) {
+    modal.innerHTML = '<div style="color:var(--text-dim);font-size:11px;font-family:\'DM Mono\',monospace">Loading draft...</div>';
+    await _renderEmailDraftInModal(clientName, modal);
+  }
 }
 
 console.log('Drive constants loading...');
@@ -3282,7 +3306,7 @@ Use the Gmail create_draft tool. Return only "DONE: [draft_id]" when complete.`
     
     if (textContent.includes('DONE') || data.content?.some(c => c.type === 'mcp_tool_result')) {
       showToast('✓ Gmail draft created — check your Drafts folder', false, false);
-      document.getElementById('emailDraftModal')?.remove();
+      _resolveEmailDraft();
     } else {
       // Fallback to open in Gmail
       showToast('Draft creation via API failed — opening Gmail instead', true, false);
@@ -3343,15 +3367,9 @@ async function bulkDownloadStatements() {
 async function bulkDraftEmails(specificClient) {
   const selected = specificClient ? [specificClient] : getSelectedClients();
   if (selected.length === 0) { showToast('Select at least one client', true, false); return; }
-  if (selected.length > 1) {
-    // Show all email drafts in sequence
-    showToast(`Opening ${selected.length} email drafts...`, false, false);
-    for (const name of selected) {
-      draftEmail(name);
-      await sleep(300);
-    }
-  } else {
-    draftEmail(selected[0]);
+  if (selected.length > 1) showToast(`Drafting emails for ${selected.length} clients — review each and close to advance`, false, false);
+  for (const name of selected) {
+    await draftEmail(name);
   }
 }
 
