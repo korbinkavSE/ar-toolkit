@@ -3146,31 +3146,36 @@ async function uploadStatementToDrive(clientName) {
     console.log('Upload response:', JSON.stringify(uploadData));
     if (uploadData.error) { console.error('Drive upload error:', uploadData.error); return null; }
 
-    // Step 3: Generate PDF using PDFShift API
+    // Step 3: Generate PDF using PDFShift — fall back to HTML link if it fails
     const pdfFilename = filename.replace('.html', '.pdf');
     showToast('Converting to PDF...', false, false);
 
     let pdfBlob = null;
-    const pdfShiftRes = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
-      method: 'POST',
-      headers: {
-        'X-API-Key': 'sk_19c9ac16821dc750c23d237482dfe4e0f0288406',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        source: fullHTML,
-        landscape: false,
-        use_print: false,
-        format: 'Letter'
-      })
-    });
-    if (!pdfShiftRes.ok) {
-      const errText = await pdfShiftRes.text();
-      console.error('PDFShift error:', errText);
-      throw new Error('PDFShift conversion failed: ' + errText);
+    try {
+      const pdfShiftRes = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
+        method: 'POST',
+        headers: {
+          'X-API-Key': 'sk_19c9ac16821dc750c23d237482dfe4e0f0288406',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ source: fullHTML, landscape: false, use_print: false, format: 'Letter' })
+      });
+      if (!pdfShiftRes.ok) {
+        const errText = await pdfShiftRes.text();
+        console.error('PDFShift error:', errText);
+      } else {
+        pdfBlob = await pdfShiftRes.blob();
+        console.log('PDF generated via PDFShift, size:', pdfBlob.size);
+      }
+    } catch(pdfErr) {
+      console.error('PDFShift fetch failed:', pdfErr.message);
     }
-    pdfBlob = await pdfShiftRes.blob();
-    console.log('PDF generated via PDFShift, size:', pdfBlob.size);
+
+    // If PDF conversion failed, keep the HTML file and return its link
+    if (!pdfBlob) {
+      showToast('PDF conversion unavailable — statement saved as HTML', true, false);
+      return uploadData.webViewLink;
+    }
 
     // Step 4: Delete HTML file and upload PDF
     await fetch(`https://www.googleapis.com/drive/v3/files/${metaData.id}?supportsAllDrives=true`, {
@@ -3192,7 +3197,7 @@ async function uploadStatementToDrive(clientName) {
     });
     const pdfData = await pdfUpload.json();
     console.log('PDF upload response:', JSON.stringify(pdfData));
-    if (pdfData.error) { console.error('PDF upload error:', pdfData.error); return null; }
+    if (pdfData.error) { console.error('PDF upload error:', pdfData.error); return uploadData.webViewLink; }
 
     // Step 5: Make PDF publicly viewable
     await fetch(`https://www.googleapis.com/drive/v3/files/${pdfData.id}/permissions?supportsAllDrives=true`, {
