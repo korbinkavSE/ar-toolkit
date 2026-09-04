@@ -2573,6 +2573,7 @@ function renderStmtClientList() {
       </div>
       <div style="display:flex;gap:8px">
         <button onclick="bulkDownloadStatements()" style="padding:6px 12px;font-size:11px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:3px;cursor:pointer">⬇ Download Selected</button>
+        <button onclick="bulkSaveStatementsToDrive()" style="padding:6px 12px;font-size:11px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:3px;cursor:pointer">☁ Save to Drive</button>
         <button onclick="bulkDraftEmails()" style="padding:6px 12px;font-size:11px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:3px;cursor:pointer">✉ Draft Emails</button>
         <button onclick="bulkMarkSent()" style="padding:6px 12px;font-size:11px;background:rgba(45,74,62,0.15);border:1px solid var(--lf-accent);color:var(--lf-accent);border-radius:3px;cursor:pointer">✓ Mark All Sent</button>
       </div>
@@ -3231,6 +3232,31 @@ async function saveClientToDrive(clientName) {
   }
 }
 
+async function bulkSaveToDrive() {
+  const token = getDriveToken();
+  if (!token) { showToast('⚠ Connect Google Drive first', true, false); return; }
+
+  // Collect unique client names from checked AR invoices
+  const checked = [...document.querySelectorAll('.ar-inv-check:checked')];
+  if (checked.length === 0) { showToast('No invoices selected', true, false); return; }
+  const clients = [...new Set(checked.map(cb => cb.dataset.client).filter(Boolean))];
+
+  showToast(`Uploading ${clients.length} statement${clients.length > 1 ? 's' : ''} to Drive...`, false, false);
+
+  let saved = 0, failed = 0;
+  for (const clientName of clients) {
+    const link = await uploadStatementToDrive(clientName);
+    if (link) saved++;
+    else failed++;
+  }
+
+  if (failed === 0) {
+    showToast(`✓ ${saved} statement${saved > 1 ? 's' : ''} saved to Drive`, false, false);
+  } else {
+    showToast(`✓ ${saved} saved, ${failed} failed — check console`, true, false);
+  }
+}
+
 function updateEmailTo() {
   const checked = document.querySelectorAll('.contact-pick:checked');
   const emails = Array.from(checked).map(cb => cb.value).filter(Boolean).join(', ');
@@ -3364,29 +3390,69 @@ function getSelectedClients() {
   return Array.from(document.querySelectorAll('.stmt-checkbox:checked')).map(cb => cb.value);
 }
 
+async function bulkSaveStatementsToDrive() {
+  const token = getDriveToken();
+  if (!token) { showToast('⚠ Connect Google Drive first', true, false); return; }
+  const selected = getSelectedClients();
+  if (selected.length === 0) { showToast('Select at least one client', true, false); return; }
+
+  showToast(`Uploading ${selected.length} statement${selected.length > 1 ? 's' : ''} to Drive...`, false, false);
+  let saved = 0, failed = 0;
+  for (const clientName of selected) {
+    const link = await uploadStatementToDrive(clientName);
+    if (link) saved++;
+    else failed++;
+  }
+  if (failed === 0) {
+    showToast(`✓ ${saved} statement${saved > 1 ? 's' : ''} saved to Drive`, false, false);
+  } else {
+    showToast(`✓ ${saved} saved, ${failed} failed — check console`, true, false);
+  }
+}
+
 async function bulkDownloadStatements() {
   const selected = getSelectedClients();
   if (selected.length === 0) { showToast('Select at least one client', true, false); return; }
-  
+
   showToast(`Generating ${selected.length} statements...`, false, false);
-  
+
   const zip = new JSZip();
   const stmtDate = document.getElementById('stmtDate').value;
   const dateStr = stmtDate ? new Date(stmtDate + 'T12:00:00').toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'}) : new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
+  const fileDateTag = stmtDate || new Date().toISOString().split('T')[0];
 
+  let pdfFailed = 0;
   for (const clientName of selected) {
     const html = buildStatementHTML(clientName, dateStr);
-    zip.file(`Statement_${clientName.replace(/[^a-zA-Z0-9]/g, '_')}_${stmtDate || 'today'}.html`, html);
+    const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
+    let added = false;
+    try {
+      const pdfRes = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
+        method: 'POST',
+        headers: { 'X-API-Key': 'sk_19c9ac16821dc750c23d237482dfe4e0f0288406', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: html, landscape: false, use_print: false, format: 'Letter' })
+      });
+      if (pdfRes.ok) {
+        const pdfBlob = await pdfRes.arrayBuffer();
+        zip.file(`Statement_${safeName}_${fileDateTag}.pdf`, pdfBlob);
+        added = true;
+      }
+    } catch(e) { /* fall through to HTML */ }
+    if (!added) {
+      zip.file(`Statement_${safeName}_${fileDateTag}.html`, html);
+      pdfFailed++;
+    }
   }
-  
+
   const blob = await zip.generateAsync({ type: 'blob' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `Statements_${stmtDate || 'today'}.zip`;
+  a.download = `Statements_${fileDateTag}.zip`;
   a.click();
   URL.revokeObjectURL(url);
-  showToast(`✓ ${selected.length} statements downloaded`, false, false);
+  const note = pdfFailed > 0 ? ` (${pdfFailed} saved as HTML)` : '';
+  showToast(`✓ ${selected.length} statements downloaded${note}`, false, false);
 }
 
 async function bulkDraftEmails(specificClient) {
@@ -3525,6 +3591,7 @@ function printStatement() {
     </select>
     <input type="date" id="arBulkDue" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
     <button onclick="bulkAssignAction()" style="padding:6px 14px;background:#2d4a3e;color:#e8e4d8;border:none;font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">Assign to Selected →</button>
+    <button onclick="bulkSaveToDrive()" style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">☁ Save to Drive</button>
     <button onclick="clearARBulkSelection()" style="padding:6px 10px;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer">✕ Clear</button>
   </div>
   <div id="arOverviewList"></div>
