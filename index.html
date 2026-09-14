@@ -1380,8 +1380,8 @@ function resetImporter() {
 // ══════════════════════════════════════════════
 // LOG FORM LOGIC
 // ══════════════════════════════════════════════
-window.onload = () => {
-  handleOAuthCallback();
+window.onload = async () => {
+  await handleOAuthCallback();
   updateDriveStatus();
   initStatementsUpload();
 
@@ -2988,28 +2988,47 @@ function getDriveToken() {
   return driveAccessToken;
 }
 
-console.log('connectGoogleDrive defined');
-function connectGoogleDrive() {
-  console.log('connectGoogleDrive called');
+// PKCE helpers — Google disabled implicit flow (response_type=token) for new clients
+function _pkceVerifier() {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return btoa(String.fromCharCode(...arr)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+}
+async function _pkceChallenge(v) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v));
+  return btoa(String.fromCharCode(...new Uint8Array(hash))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+}
+
+async function connectGoogleDrive() {
+  const verifier = _pkceVerifier();
+  const challenge = await _pkceChallenge(verifier);
+  sessionStorage.setItem('oauth_verifier_drive', verifier);
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: window.location.href.split('?')[0].split('#')[0],
-    response_type: 'token',
+    response_type: 'code',
     scope: GOOGLE_SCOPE,
     state: 'drive',
-    prompt: 'consent'
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    access_type: 'online'
   });
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 
-function connectGmail() {
+async function connectGmail() {
+  const verifier = _pkceVerifier();
+  const challenge = await _pkceChallenge(verifier);
+  sessionStorage.setItem('oauth_verifier_gmail', verifier);
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: window.location.href.split('?')[0].split('#')[0],
-    response_type: 'token',
+    response_type: 'code',
     scope: GMAIL_SCOPE,
     state: 'gmail',
-    prompt: 'consent'
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    access_type: 'online'
   });
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
@@ -3021,38 +3040,56 @@ function getGmailToken() {
   return gmailAccessToken;
 }
 
-function handleOAuthCallback() {
-  const hash = window.location.hash;
-  if (!hash) return;
-  const params = new URLSearchParams(hash.substring(1));
-  const oauthError = params.get('error');
+async function handleOAuthCallback() {
+  // PKCE auth code flow — Google returns ?code=XXX&state=XXX in query string
+  const qp = new URLSearchParams(window.location.search);
+  const code = qp.get('code');
+  const state = qp.get('state');
+  const oauthError = qp.get('error');
+
   if (oauthError) {
     window.history.replaceState({}, document.title, window.location.pathname);
-    const state = params.get('state');
-    if (state === 'gmail') {
-      setTimeout(() => showToast('Gmail connect failed — enable Gmail API in Google Cloud Console and add gmail.readonly scope to your OAuth consent screen', true, false), 500);
-    }
+    setTimeout(() => showToast(`Google auth failed: ${oauthError}`, true, false), 500);
     return;
   }
-  const token = params.get('access_token');
-  const expiresIn = params.get('expires_in');
-  const state = params.get('state');
-  if (token) {
-    const expiry = Date.now() + (parseInt(expiresIn) * 1000);
+
+  if (!code || !state) return;
+
+  window.history.replaceState({}, document.title, window.location.pathname);
+  const verifier = sessionStorage.getItem(`oauth_verifier_${state}`);
+  sessionStorage.removeItem(`oauth_verifier_${state}`);
+  const redirectUri = window.location.href.split('?')[0].split('#')[0];
+
+  try {
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+        code_verifier: verifier
+      })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error_description || data.error);
+    const token = data.access_token;
+    const expiry = Date.now() + (data.expires_in * 1000);
     if (state === 'gmail') {
       gmailAccessToken = token;
       sessionStorage.setItem('gmail_token', token);
       sessionStorage.setItem('gmail_token_expiry', expiry.toString());
-      window.history.replaceState({}, document.title, window.location.pathname);
-      updateGmailStatus();
+      setTimeout(updateGmailStatus, 100);
     } else {
       driveAccessToken = token;
       driveTokenExpiry = expiry;
       sessionStorage.setItem('drive_token', token);
       sessionStorage.setItem('drive_token_expiry', expiry.toString());
-      window.history.replaceState({}, document.title, window.location.pathname);
-      updateDriveStatus();
+      setTimeout(updateDriveStatus, 100);
     }
+  } catch(e) {
+    setTimeout(() => showToast(`Google ${state} auth failed: ${e.message}`, true, false), 500);
   }
 }
 
