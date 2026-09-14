@@ -852,8 +852,8 @@ async function connectAll() {
   } catch(e) {
     status.textContent = `Failed: ${e.message}`;
     status.className = 'creds-status err';
-    localStorage.removeItem('ar_api_token');
-    showTokenPrompt();
+    const atChip = document.getElementById('atStatus');
+    if (atChip) { atChip.textContent = '⚠ Airtable'; atChip.style.color = '#c06060'; }
   }
 }
 
