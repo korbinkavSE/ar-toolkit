@@ -558,18 +558,18 @@ td.amount { color: var(--accent2); }
     <button class="tab-btn" onclick="switchTab('statements')">📄 Statements</button>
     <button class="tab-btn" onclick="switchTab('email-ingest')">✉ Email Ingest</button>
   </nav>
+  <div style="display:flex;align-items:center;gap:8px;padding:0 16px 0 0;flex-shrink:0">
+    <span id="atStatus" style="font-size:10px;color:var(--text-dim);font-family:'DM Mono',monospace;cursor:pointer" onclick="showTokenPrompt()" title="Click to reconnect"></span>
+    <button id="driveConnectBtn" onclick="connectGoogleDrive()" style="padding:5px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;border-radius:3px;cursor:pointer;white-space:nowrap">&#x2601; Drive</button>
+  </div>
 </header>
 
-<!-- SHARED CREDENTIALS BAR -->
-<div class="creds-bar">
-  <input type="password" id="apiToken" placeholder="Airtable token" style="padding:6px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;width:220px" />
+<!-- hidden creds inputs — values set by showTokenPrompt / window.onload -->
+<div style="display:none">
+  <input type="password" id="apiToken" />
   <input type="hidden" id="baseId" value="appk8z59VBuLT9ndp" />
-  <button onclick="connectAll()" style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer;text-transform:uppercase;letter-spacing:0.06em">Connect</button>
-  <span class="creds-status" id="credsStatus"></span>
-  <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-    <button id="driveConnectBtn" onclick="connectGoogleDrive()" style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;border-radius:3px;cursor:pointer;white-space:nowrap">&#x2601; Drive</button>
-    <span id="driveStatus" style="font-size:10px;color:var(--text-dim)"></span>
-  </div>
+  <span id="credsStatus"></span>
+  <span id="driveStatus"></span>
 </div>
 
 <!-- ══════════ LOG FORM TAB ══════════ -->
@@ -845,6 +845,8 @@ async function connectAll() {
     localStorage.setItem('ar_api_token', gApiToken);
     status.textContent = `✓ Connected — ${allProjects.length} projects loaded`;
     status.className = 'creds-status ok';
+    const atChip = document.getElementById('atStatus');
+    if (atChip) { atChip.textContent = '✓ Airtable'; atChip.style.color = 'var(--lf-accent)'; }
     document.getElementById('projectSearch').disabled = false;
     document.getElementById('submitBtn').disabled = false;
   } catch(e) {
@@ -1380,10 +1382,12 @@ window.onload = () => {
   updateDriveStatus();
   initStatementsUpload();
 
-  const savedToken = localStorage.getItem('ar_api_token');
+  const savedToken = localStorage.getItem('ar_api_token') || sessionStorage.getItem('ar_api_token');
   if (savedToken) {
     document.getElementById('apiToken').value = savedToken;
     connectAll();
+  } else {
+    showTokenPrompt();
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -3018,6 +3022,15 @@ function handleOAuthCallback() {
   const hash = window.location.hash;
   if (!hash) return;
   const params = new URLSearchParams(hash.substring(1));
+  const oauthError = params.get('error');
+  if (oauthError) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    const state = params.get('state');
+    if (state === 'gmail') {
+      setTimeout(() => showToast('Gmail connect failed — enable Gmail API in Google Cloud Console and add gmail.readonly scope to your OAuth consent screen', true, false), 500);
+    }
+    return;
+  }
   const token = params.get('access_token');
   const expiresIn = params.get('expires_in');
   const state = params.get('state');
