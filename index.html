@@ -871,6 +871,7 @@ function showTokenPrompt() {
       <button id="token-submit" onclick="
         const val = document.getElementById('token-input').value.trim();
         if(val.startsWith('pat')) {
+          localStorage.setItem('ar_api_token', val);
           sessionStorage.setItem('ar_api_token', val);
           document.getElementById('apiToken').value = val;
           document.getElementById('token-screen').remove();
