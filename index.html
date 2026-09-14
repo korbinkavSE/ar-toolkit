@@ -553,8 +553,7 @@ td.amount { color: var(--accent2); }
   <span class="subtitle" style="margin-left:auto;font-size:10px;opacity:0.4">v1.8</span>
   </div>
   <nav class="tabs">
-    <button class="tab-btn active" onclick="switchTab('importer')">⬆ Import Invoices</button>
-    <button class="tab-btn" onclick="switchTab('ar-overview')">📊 A/R Overview</button>
+    <button class="tab-btn active" onclick="switchTab('ar-overview')">📊 A/R Overview</button>
     <button class="tab-btn" onclick="switchTab('logform')">✎ Log an Update</button>
     <button class="tab-btn" onclick="switchTab('statements')">📄 Statements</button>
     <button class="tab-btn" onclick="switchTab('email-ingest')">✉ Email Ingest</button>
@@ -571,74 +570,6 @@ td.amount { color: var(--accent2); }
     <button id="driveConnectBtn" onclick="connectGoogleDrive()" style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;border-radius:3px;cursor:pointer;white-space:nowrap">&#x2601; Drive</button>
     <span id="driveStatus" style="font-size:10px;color:var(--text-dim)"></span>
   </div>
-</div>
-
-<!-- ══════════ IMPORTER TAB ══════════ -->
-<div class="tab-panel active" id="tab-importer">
-<div class="imp-main">
-  <div class="steps">
-    <div class="step active" id="imp-step1"><div class="step-num">1</div><div class="step-label">Upload File</div></div>
-    <div class="step" id="imp-step2"><div class="step-num">2</div><div class="step-label">Configure</div></div>
-    <div class="step" id="imp-step3"><div class="step-num">3</div><div class="step-label">Review</div></div>
-    <div class="step" id="imp-step4"><div class="step-num">4</div><div class="step-label">Import</div></div>
-    <div class="step" id="imp-step5"><div class="step-num">✓</div><div class="step-label">Done</div></div>
-  </div>
-
-  <!-- Panel 1: Upload -->
-  <div class="imp-panel active" id="imp-panel1">
-    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
-      <div class="upload-icon">⬆</div>
-      <h2>Drop your BigTime export here</h2>
-      <p>Accepts .xlsx or .xls files exported from BigTime A/R report</p>
-    </div>
-    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
-  </div>
-
-  <!-- Panel 2: Configure -->
-  <div class="imp-panel" id="imp-panel2">
-    <div class="info-box">Using credentials from the connection bar above. Table names below should match your Airtable exactly.</div>
-    <div class="config-grid">
-      <div class="imp-field-group"><label>Invoices Table Name</label><input type="text" id="invoicesTable" value="Invoices" /></div>
-      <div class="imp-field-group"><label>Projects Table Name</label><input type="text" id="projectsTable" value="Projects" /></div>
-      <div class="imp-field-group"><label>Clients Table Name</label><input type="text" id="clientsTable" value="Clients" /></div>
-    </div>
-    <div class="action-row">
-      <button class="imp-btn imp-btn-ghost" onclick="impGoTo(1)">← Back</button>
-      <button class="imp-btn imp-btn-primary" onclick="runPreview()">Preview Import →</button>
-    </div>
-  </div>
-
-  <!-- Panel 3: Review -->
-  <div class="imp-panel" id="imp-panel3">
-    <div class="preview-header"><h3>Import Preview</h3></div>
-    <div class="imp-summary-grid" id="previewStats"></div>
-    <div class="tab-row">
-      <div class="tab-inner active" onclick="switchInnerTab('new')">New Invoices</div>
-      <div class="tab-inner" onclick="switchInnerTab('existing')">Already in Airtable</div>
-      <div class="tab-inner" onclick="switchInnerTab('conflicts')">Conflicts</div>
-    </div>
-    <div class="tab-content active" id="tab-new"></div>
-    <div class="tab-content" id="tab-existing"></div>
-    <div class="tab-content" id="tab-conflicts"></div>
-    <div class="action-row">
-      <button class="imp-btn imp-btn-ghost" onclick="impGoTo(2)">← Back</button>
-      <button class="imp-btn imp-btn-primary" onclick="runImport()">Import New Invoices →</button>
-    </div>
-  </div>
-
-  <!-- Panel 4: Importing -->
-  <div class="imp-panel" id="imp-panel4">
-    <h3 class="section-title">Importing...</h3>
-    <div class="progress-wrap">
-      <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:12px;">
-        <span style="color:var(--text-dim);font-size:11px;" id="progressLabel">Starting...</span>
-        <span style="color:var(--text-dim);font-size:11px;" id="progressPct">0%</span>
-      </div>
-      <div class="progress-log" id="progressLog"></div>
-    </div>
-  </div>
-</div>
 </div>
 
 <!-- ══════════ LOG FORM TAB ══════════ -->
@@ -855,7 +786,7 @@ const TABLE_ACTIVITY = 'Activity Log';
 const TABLE_TEAM = 'Team Members';
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', ['importer','ar-overview','logform','statements','email-ingest'][i] === tab));
+  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', ['ar-overview','logform','statements','email-ingest'][i] === tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
   if (tab === 'statements') { initStatementsUpload(); loadSentLog().then(() => { if (stmtData && stmtData.clients && stmtData.clients.length > 0) renderStmtClientList(); }); }
@@ -3639,7 +3570,7 @@ function printStatement() {
 </div>
 
 <!-- A/R OVERVIEW TAB -->
-<div class="tab-panel" id="tab-ar-overview">
+<div class="tab-panel active" id="tab-ar-overview">
 <div class="imp-main">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
     <div>
