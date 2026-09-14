@@ -557,6 +557,7 @@ td.amount { color: var(--accent2); }
     <button class="tab-btn" onclick="switchTab('ar-overview')">📊 A/R Overview</button>
     <button class="tab-btn" onclick="switchTab('logform')">✎ Log an Update</button>
     <button class="tab-btn" onclick="switchTab('statements')">📄 Statements</button>
+    <button class="tab-btn" onclick="switchTab('email-ingest')">✉ Email Ingest</button>
   </nav>
 </header>
 
@@ -854,11 +855,12 @@ const TABLE_ACTIVITY = 'Activity Log';
 const TABLE_TEAM = 'Team Members';
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', ['importer','ar-overview','logform','statements'][i] === tab));
+  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', ['importer','ar-overview','logform','statements','email-ingest'][i] === tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
   if (tab === 'statements') { initStatementsUpload(); loadSentLog().then(() => { if (stmtData && stmtData.clients && stmtData.clients.length > 0) renderStmtClientList(); }); }
   if (tab === 'ar-overview') loadAROverview();
+  if (tab === 'email-ingest') initEmailIngest();
 }
 
 function showToast(msg, isErr = false, isDark = true) {
@@ -3032,8 +3034,10 @@ console.log('Drive constants loading...');
 const DRIVE_FOLDER_ID = '1P1OXr0pw-w9olBAxplzsrDgM8leHaJ-O';
 const GOOGLE_CLIENT_ID = '832930681823-gn72panu4d88gqqahktcnofn5o6nb8br.apps.googleusercontent.com';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive';
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 let driveAccessToken = null;
 let driveTokenExpiry = null;
+let gmailAccessToken = null;
 
 function getDriveToken() {
   // Check sessionStorage first
@@ -3051,12 +3055,32 @@ function connectGoogleDrive() {
   console.log('connectGoogleDrive called');
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: window.location.href.split('?')[0],
+    redirect_uri: window.location.href.split('?')[0].split('#')[0],
     response_type: 'token',
     scope: GOOGLE_SCOPE,
+    state: 'drive',
     prompt: 'consent'
   });
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+}
+
+function connectGmail() {
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: window.location.href.split('?')[0].split('#')[0],
+    response_type: 'token',
+    scope: GMAIL_SCOPE,
+    state: 'gmail',
+    prompt: 'consent'
+  });
+  window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+}
+
+function getGmailToken() {
+  const stored = sessionStorage.getItem('gmail_token');
+  const expiry = sessionStorage.getItem('gmail_token_expiry');
+  if (stored && expiry && Date.now() < parseInt(expiry)) { gmailAccessToken = stored; return stored; }
+  return gmailAccessToken;
 }
 
 function handleOAuthCallback() {
@@ -3065,15 +3089,23 @@ function handleOAuthCallback() {
   const params = new URLSearchParams(hash.substring(1));
   const token = params.get('access_token');
   const expiresIn = params.get('expires_in');
+  const state = params.get('state');
   if (token) {
-    driveAccessToken = token;
     const expiry = Date.now() + (parseInt(expiresIn) * 1000);
-    driveTokenExpiry = expiry;
-    sessionStorage.setItem('drive_token', token);
-    sessionStorage.setItem('drive_token_expiry', expiry.toString());
-    // Clean URL
-    window.history.replaceState({}, document.title, window.location.pathname);
-    updateDriveStatus();
+    if (state === 'gmail') {
+      gmailAccessToken = token;
+      sessionStorage.setItem('gmail_token', token);
+      sessionStorage.setItem('gmail_token_expiry', expiry.toString());
+      window.history.replaceState({}, document.title, window.location.pathname);
+      updateGmailStatus();
+    } else {
+      driveAccessToken = token;
+      driveTokenExpiry = expiry;
+      sessionStorage.setItem('drive_token', token);
+      sessionStorage.setItem('drive_token_expiry', expiry.toString());
+      window.history.replaceState({}, document.title, window.location.pathname);
+      updateDriveStatus();
+    }
   }
 }
 
@@ -3086,6 +3118,21 @@ function updateDriveStatus() {
     if (status) status.textContent = '';
   } else {
     if (btn) { btn.textContent = '☁ Connect Drive'; btn.style.color = 'var(--text-dim)'; btn.style.borderColor = 'var(--border)'; }
+  }
+}
+
+function updateGmailStatus() {
+  const token = getGmailToken();
+  const btn = document.getElementById('gmailConnectBtn');
+  if (!btn) return;
+  if (token) {
+    btn.textContent = '✓ Gmail Connected';
+    btn.style.color = 'var(--lf-accent)';
+    btn.style.borderColor = 'var(--lf-accent)';
+  } else {
+    btn.textContent = '✉ Connect Gmail';
+    btn.style.color = 'var(--text-dim)';
+    btn.style.borderColor = 'var(--border)';
   }
 }
 
@@ -3553,6 +3600,42 @@ function printStatement() {
 
 </div>
 
+</div>
+
+<!-- EMAIL INGEST TAB -->
+<div class="tab-panel" id="tab-email-ingest">
+<div class="imp-main">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+    <div>
+      <div style="font-family:'Fraunces',serif;font-weight:300;font-size:20px;color:var(--text)">Email Ingest</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Parse A/R emails into Airtable interaction records</div>
+    </div>
+    <button id="gmailConnectBtn" onclick="connectGmail()" style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;border-radius:3px;cursor:pointer;white-space:nowrap">✉ Connect Gmail</button>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+    <!-- Left: Input -->
+    <div>
+      <div class="imp-field-group" style="margin-bottom:16px">
+        <label>Paste Email Text</label>
+        <textarea id="emailPasteArea" placeholder="Paste the full email here (include From, Subject, Date headers if available)..." style="width:100%;box-sizing:border-box;min-height:160px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;padding:10px;resize:vertical"></textarea>
+        <button onclick="parseAndPreviewEmail()" style="margin-top:8px;width:100%;padding:10px;background:var(--surface);border:1px solid var(--accent);border-radius:3px;color:var(--accent);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;letter-spacing:0.04em" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='var(--surface)'">Parse Email →</button>
+      </div>
+      <div class="imp-field-group">
+        <label>Or Load from Gmail</label>
+        <button id="gmailLoadBtn" onclick="loadGmailEmails()" style="width:100%;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;letter-spacing:0.04em" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='var(--surface)'">⟳ Load Recent A/R Emails</button>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.5">Searches last 30 days for BigTime payment notifications and statement replies. Connect Gmail above first.</div>
+      </div>
+    </div>
+    <!-- Right: Results -->
+    <div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-dim);margin-bottom:12px">Parsed Emails</div>
+      <div id="emailIngestResults">
+        <div style="color:var(--text-dim);font-size:12px;padding:20px 0">No emails parsed yet. Paste an email above or load from Gmail.</div>
+      </div>
+    </div>
+  </div>
+</div>
 </div>
 
 <!-- A/R OVERVIEW TAB -->
@@ -4208,6 +4291,325 @@ async function saveAssignAction(invoiceId, clientName) {
     showToast(`✓ Action assigned: ${status}`, false, false);
     renderAROverview();
   } catch(e) { showToast(`✗ ${e.message}`, true, false); }
+}
+</script>
+
+<script>
+// ── EMAIL INGEST ──────────────────────────────────────────
+
+let emailIngestItems = [];
+let _emailIngestInvoiceMap = null; // invoiceNumber → airtable record id
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function initEmailIngest() {
+  updateGmailStatus();
+  if (!gApiToken || !gBaseId) return;
+  if (_emailIngestInvoiceMap) return;
+  // Lazy-load invoice number → record id map
+  _emailIngestInvoiceMap = {};
+  let offset = '';
+  try {
+    do {
+      const url = `https://api.airtable.com/v0/${gBaseId}/Invoices?fields[]=Invoice+Number${offset ? '&offset='+offset : ''}`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${gApiToken}` } });
+      const data = await res.json();
+      for (const r of data.records || []) {
+        const n = r.fields['Invoice Number'];
+        if (n) _emailIngestInvoiceMap[n] = r.id;
+      }
+      offset = data.offset || '';
+    } while (offset);
+  } catch(e) { console.warn('Email ingest: invoice preload failed', e.message); }
+}
+
+// ── Parsing ──────────────────────────────────────────────
+
+function _parseEmailHeaders(raw) {
+  const lines = raw.split(/\r?\n/);
+  let from = '', subject = '', dateStr = '', bodyStart = 0, inHeaders = true;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (inHeaders) {
+      if (line.trim() === '' && i > 0) { bodyStart = i + 1; inHeaders = false; break; }
+      if (/^from:\s*/i.test(line)) from = line.replace(/^from:\s*/i,'').trim();
+      else if (/^subject:\s*/i.test(line)) subject = line.replace(/^subject:\s*/i,'').trim();
+      else if (/^date:\s*/i.test(line)) dateStr = line.replace(/^date:\s*/i,'').trim();
+    }
+  }
+  const body = lines.slice(bodyStart).join('\n').trim() || raw.trim();
+  const emailMatch = from.match(/<([^>]+)>/);
+  const fromEmail = emailMatch ? emailMatch[1] : from;
+  const fromName = from.replace(/<[^>]+>/,'').trim().replace(/^"|"$/g,'');
+  return { from, fromEmail, fromName, subject, dateStr, body };
+}
+
+function _isBigTime(e) {
+  return /bigtime\.net/i.test(e.fromEmail) ||
+         /invoice\s*paid|payment\s*received|payment\s*notification/i.test(e.subject);
+}
+
+function _parseBigTime(e) {
+  const text = e.subject + ' ' + e.body;
+
+  const invoiceNumbers = [];
+  const invRe = /#?(\d{4,6}-\d+)/g;
+  let m;
+  while ((m = invRe.exec(text)) !== null) invoiceNumbers.push(m[1]);
+
+  const amounts = [];
+  const amtRe = /\$\s*([0-9,]+(?:\.\d{2})?)/g;
+  while ((m = amtRe.exec(text)) !== null) amounts.push(m[1].replace(/,/g,''));
+
+  let clientName = null;
+  const clientRe = /from\s+([A-Z][^$\n]{2,50}?)\s+for\s+invoice/i;
+  const clientLabel = /client[:\s]+([A-Z][^\n$]{2,50}?)(?:\n|$|\s*invoice|\s*\$)/i;
+  const m1 = text.match(clientRe), m2 = text.match(clientLabel);
+  if (m1) clientName = m1[1].trim();
+  else if (m2) clientName = m2[1].trim();
+
+  const parts = [];
+  if (amounts.length) parts.push('$' + amounts.join(' + $'));
+  if (invoiceNumbers.length) parts.push('#' + invoiceNumbers.join(', #'));
+  const notes = `Payment received: ${[clientName, ...parts].filter(Boolean).join(' — ')}`;
+
+  return { action: 'Payment Received', invoiceNumbers, amounts, clientName, notes, followUp: false, nextSteps: null, rawDate: e.dateStr, subject: e.subject, fromEmail: e.fromEmail, fromName: e.fromName };
+}
+
+function _hasFollowUp(text) {
+  return /\b(tomorrow|will\s+pay|will\s+settle|will\s+send|i('ll|'m\s+going)|by\s+end\s+of|next\s+week|this\s+week|checking\s+in|can\s+you\s+send|please\s+(send|forward|provide)|need\s+you\s+to|status\s+update)\b/i.test(text);
+}
+
+function _parseReply(e) {
+  const text = e.subject + ' ' + e.body;
+  const isOOO = /out\s+of\s+office|OOO|i('m| am)\s+away|away\s+until|back\s+on\s+[A-Z]/i.test(text);
+  const followUp = _hasFollowUp(text) || isOOO;
+
+  let oooReturn = null;
+  if (isOOO) {
+    const rm = text.match(/(?:back|return|available)\s+(?:on\s+)?([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)/i) ||
+               text.match(/until\s+([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?|\d{1,2}[\/\-]\d{1,2})/i);
+    oooReturn = rm?.[1] || null;
+  }
+
+  const invoiceNumbers = [];
+  const invRe = /#?(\d{4,6}-\d+)/g;
+  let m;
+  while ((m = invRe.exec(e.body)) !== null) invoiceNumbers.push(m[1]);
+
+  let notes = e.body.replace(/\s+/g,' ').trim();
+  if (notes.length > 600) notes = notes.substring(0, 597) + '…';
+
+  const nextSteps = isOOO
+    ? `Follow up after ${oooReturn || 'return'}`
+    : (followUp ? 'Confirm payment / follow up on request' : null);
+
+  return { action: 'Email Received', invoiceNumbers, amounts: [], clientName: e.fromName || null, notes, followUp, nextSteps, rawDate: e.dateStr, subject: e.subject, fromEmail: e.fromEmail, fromName: e.fromName };
+}
+
+function parseEmailText(raw) {
+  const e = _parseEmailHeaders(raw);
+  return _isBigTime(e) ? _parseBigTime(e) : _parseReply(e);
+}
+
+// ── Client matching ───────────────────────────────────────
+
+function _matchClient(name) {
+  if (!name || !allClients?.length) return null;
+  const low = name.toLowerCase().trim();
+  const exact = allClients.find(c => (c.fields['Client Name']||'').toLowerCase() === low);
+  if (exact) return exact.fields['Client Name'];
+  const partial = allClients.find(c => {
+    const cn = (c.fields['Client Name']||'').toLowerCase();
+    return cn.includes(low) || low.includes(cn);
+  });
+  return partial?.fields['Client Name'] || null;
+}
+
+function _invoiceIds(numbers) {
+  if (!_emailIngestInvoiceMap) return [];
+  return (numbers || []).map(n => _emailIngestInvoiceMap[n]).filter(Boolean);
+}
+
+function _parseDate(raw) {
+  if (!raw) return new Date().toISOString().split('T')[0];
+  try { return new Date(raw).toISOString().split('T')[0]; } catch(e) { return new Date().toISOString().split('T')[0]; }
+}
+
+// ── UI ────────────────────────────────────────────────────
+
+function _clientOptions(selected) {
+  const opts = (allClients || [])
+    .slice().sort((a,b) => (a.fields['Client Name']||'').localeCompare(b.fields['Client Name']||''))
+    .map(c => {
+      const n = c.fields['Client Name'] || '';
+      return `<option value="${escHtml(n)}" ${n === selected ? 'selected' : ''}>${escHtml(n)}</option>`;
+    });
+  return `<option value="">— select client —</option>` + opts.join('');
+}
+
+function renderEmailIngestItems() {
+  const el = document.getElementById('emailIngestResults');
+  if (!el) return;
+  if (!emailIngestItems.length) {
+    el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:20px 0">No emails parsed yet. Paste an email above or load from Gmail.</div>';
+    return;
+  }
+  const active = emailIngestItems.filter(i => !i._skip).length;
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:11px;color:var(--text-dim);font-family:'DM Mono',monospace">${active} of ${emailIngestItems.length} queued</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="clearEmailIngestItems()" style="padding:5px 10px;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer">Clear All</button>
+        <button onclick="logEmailInteractions()" style="padding:7px 14px;background:var(--accent);color:var(--bg);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;cursor:pointer;border:none;font-weight:600">Log ${active} to Airtable →</button>
+      </div>
+    </div>
+    ${emailIngestItems.map((item, idx) => _emailCard(item, idx)).join('')}`;
+}
+
+function _emailCard(item, idx) {
+  const skipped = item._skip ? 'opacity:0.45;' : '';
+  const actionOpts = ['Email Sent','Email Received','Statement Sent','Phone Call','Note Added','Payment Received','PM Pinged']
+    .map(a => `<option value="${a}" ${item.action===a?'selected':''}>${a}</option>`).join('');
+  const invLabel = item.invoiceNumbers?.length
+    ? '#' + item.invoiceNumbers.join(', #') + (item.amounts?.length ? ' ($' + item.amounts.join(' + $') + ')' : '')
+    : 'none matched';
+  const dateVal = _parseDate(item.logDate || item.rawDate);
+  const clientSel = item.clientNameMatched || item.clientName || '';
+
+  return `<div style="${skipped}background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:14px;margin-bottom:10px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <select onchange="emailIngestItems[${idx}].clientName=this.value;emailIngestItems[${idx}].clientNameMatched=this.value" style="flex:1;min-width:160px;padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">${_clientOptions(clientSel)}</select>
+      <select onchange="emailIngestItems[${idx}].action=this.value" style="padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">${actionOpts}</select>
+      <input type="date" value="${dateVal}" onchange="emailIngestItems[${idx}].logDate=this.value" style="padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);font-family:'DM Mono',monospace;margin-bottom:6px">
+      invoices: ${escHtml(invLabel)}${item.subject ? ' &nbsp;|&nbsp; subj: ' + escHtml(item.subject.substring(0,60)) : ''}
+    </div>
+    <textarea onchange="emailIngestItems[${idx}].notes=this.value" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;padding:7px;resize:vertical;min-height:56px">${escHtml(item.notes||'')}</textarea>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+      <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-dim);font-family:'DM Mono',monospace;cursor:pointer">
+        <input type="checkbox" ${item.followUp?'checked':''} onchange="emailIngestItems[${idx}].followUp=this.checked"> Follow-up required
+      </label>
+      ${item.followUp && item.nextSteps ? `<span style="font-size:10px;color:var(--text-dim)">→ ${escHtml(item.nextSteps)}</span>` : ''}
+      <button onclick="emailIngestItems[${idx}]._skip=!emailIngestItems[${idx}]._skip;renderEmailIngestItems()" style="margin-left:auto;padding:3px 10px;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;cursor:pointer">${item._skip?'Restore':'Skip'}</button>
+    </div>
+  </div>`;
+}
+
+function parseAndPreviewEmail() {
+  const raw = document.getElementById('emailPasteArea')?.value?.trim();
+  if (!raw) { showToast('Paste email text first', true, false); return; }
+  const parsed = parseEmailText(raw);
+  if (!parsed.clientName && parsed.fromName) parsed.clientName = parsed.fromName;
+  parsed.clientNameMatched = _matchClient(parsed.clientName);
+  emailIngestItems.push({ ...parsed, _id: Date.now(), _skip: false });
+  renderEmailIngestItems();
+  document.getElementById('emailPasteArea').value = '';
+}
+
+function clearEmailIngestItems() {
+  emailIngestItems = [];
+  renderEmailIngestItems();
+}
+
+// ── Gmail fetch ───────────────────────────────────────────
+
+function _gmailBody(payload) {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/plain' && payload.body?.data) {
+    try { return atob(payload.body.data.replace(/-/g,'+').replace(/_/g,'/')); } catch(e) { return ''; }
+  }
+  for (const part of payload.parts || []) {
+    if (part.mimeType === 'text/plain') { const r = _gmailBody(part); if (r) return r; }
+  }
+  for (const part of payload.parts || []) { const r = _gmailBody(part); if (r) return r; }
+  return '';
+}
+
+async function loadGmailEmails() {
+  const token = getGmailToken();
+  if (!token) { showToast('Connect Gmail first (button top-right)', true, false); return; }
+  const btn = document.getElementById('gmailLoadBtn');
+  if (btn) btn.textContent = 'Loading…';
+
+  try {
+    const queries = [
+      'from:DoNotReply@iq.bigtime.net newer_than:30d',
+      '(subject:invoice OR subject:statement OR subject:payment) newer_than:14d -from:DoNotReply@iq.bigtime.net'
+    ];
+    const ids = new Set();
+    for (const q of queries) {
+      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=25`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      for (const m of data.messages || []) ids.add(m.id);
+    }
+    if (!ids.size) { showToast('No A/R emails found in last 14–30 days', false, false); if (btn) btn.textContent = '⟳ Load Recent A/R Emails'; return; }
+
+    showToast(`Found ${ids.size} emails, loading…`, false, false);
+    const newItems = [];
+    for (const id of [...ids].slice(0,30)) {
+      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: { Authorization: `Bearer ${token}` } });
+      const msg = await res.json();
+      const hdrs = {};
+      for (const h of msg.payload?.headers || []) hdrs[h.name.toLowerCase()] = h.value;
+      const e = {
+        fromEmail: (hdrs.from||'').match(/<([^>]+)>/)?.[1] || hdrs.from || '',
+        fromName: (hdrs.from||'').replace(/<[^>]+>/,'').trim().replace(/^"|"$/g,''),
+        subject: hdrs.subject || '',
+        dateStr: hdrs.date || '',
+        body: _gmailBody(msg.payload) || ''
+      };
+      const parsed = _isBigTime(e) ? _parseBigTime(e) : _parseReply(e);
+      if (!parsed.clientName && e.fromName) parsed.clientName = e.fromName;
+      parsed.clientNameMatched = _matchClient(parsed.clientName);
+      newItems.push({ ...parsed, _id: id, _skip: false });
+    }
+    emailIngestItems.push(...newItems);
+    renderEmailIngestItems();
+    showToast(`✓ Loaded ${newItems.length} emails`, false, false);
+  } catch(e) {
+    console.error('Gmail fetch error:', e);
+    showToast('Gmail fetch failed: ' + e.message, true, false);
+  }
+  if (btn) btn.textContent = '⟳ Load Recent A/R Emails';
+}
+
+// ── Log to Airtable ───────────────────────────────────────
+
+async function logEmailInteractions() {
+  const toLog = emailIngestItems.filter(i => !i._skip);
+  if (!toLog.length) { showToast('Nothing queued to log', true, false); return; }
+  if (!gApiToken || !gBaseId) { showToast('Connect Airtable first', true, false); return; }
+
+  const noClient = toLog.filter(i => !i.clientName && !i.clientNameMatched);
+  if (noClient.length) { showToast(`${noClient.length} item(s) still need a client selected`, true, false); return; }
+
+  let logged = 0, failed = 0;
+  for (const item of toLog) {
+    try {
+      const ids = _invoiceIds(item.invoiceNumbers || []);
+      const date = _parseDate(item.logDate || item.rawDate);
+      const fields = {
+        'Date': date,
+        'Action Taken': item.action || 'Note Added',
+        'Notes': item.notes || '',
+        'Follow-up Required': !!item.followUp
+      };
+      if (ids.length) fields['Invoices'] = ids;
+      if (item.followUp && item.nextSteps) fields['Next Steps'] = item.nextSteps;
+      await atPost(TABLE_ACTIVITY, fields);
+      item._logged = true;
+      logged++;
+    } catch(e) { console.error('logEmailInteractions error:', e); failed++; }
+  }
+
+  if (logged) emailIngestItems = emailIngestItems.filter(i => !i._logged);
+  renderEmailIngestItems();
+  if (failed === 0) showToast(`✓ Logged ${logged} interactions to Airtable`, false, false);
+  else showToast(`Logged ${logged}, failed ${failed}`, true, false);
 }
 </script>
 
