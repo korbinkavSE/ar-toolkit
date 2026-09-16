@@ -929,6 +929,11 @@ async function loadClients() {
     offset = data.offset || '';
   } while (offset);
   allClients.sort((a,b) => (a.fields['Client Name']||'').localeCompare(b.fields['Client Name']||''));
+  const pcs = document.getElementById('pasteContactSel');
+  if (pcs) {
+    pcs.innerHTML = '<option value="">— Contact / From —</option>' +
+      allClients.map(c => { const n = c.fields['Client Name']||''; return `<option value="${escHtml(n)}">${escHtml(n)}</option>`; }).join('');
+  }
 }
 
 async function loadTeamMembers() {
@@ -3173,14 +3178,29 @@ function printStatement() {
     <!-- Left: Input -->
     <div>
       <div class="imp-field-group" style="margin-bottom:16px">
-        <label>Paste Email Text</label>
+        <label>Paste Email / Note</label>
+        <div style="display:flex;gap:8px;margin-bottom:6px">
+          <select id="pasteContactSel" style="flex:1;padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">
+            <option value="">— Contact / From —</option>
+          </select>
+          <select id="pasteActionSel" style="padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">
+            <option value="">— Type —</option>
+            <option>Email Received</option>
+            <option>Email Sent</option>
+            <option>Phone Call</option>
+            <option>Note Added</option>
+            <option>Statement Sent</option>
+            <option>Payment Received</option>
+            <option>PM Pinged</option>
+          </select>
+        </div>
         <textarea id="emailPasteArea" placeholder="Paste the full email here (include From, Subject, Date headers if available)..." style="width:100%;box-sizing:border-box;min-height:160px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;padding:10px;resize:vertical"></textarea>
         <button onclick="parseAndPreviewEmail()" style="margin-top:8px;width:100%;padding:10px;background:var(--surface);border:1px solid var(--accent);border-radius:3px;color:var(--accent);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;letter-spacing:0.04em" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='var(--surface)'">Parse Email →</button>
       </div>
       <div class="imp-field-group">
         <label>Or Load from Gmail</label>
         <button id="gmailLoadBtn" onclick="loadGmailEmails()" style="width:100%;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:3px;color:var(--text-dim);font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;letter-spacing:0.04em" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='var(--surface)'">⟳ Load Recent A/R Emails</button>
-        <div style="font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.5">Searches last 30 days for BigTime payment notifications and statement replies. Connect Gmail above first.</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.5">Searches inbox last 30 days for client invoice/statement/payment emails. Excludes automated senders (BigTime, QBO).</div>
       </div>
     </div>
     <!-- Right: Results -->
@@ -4060,10 +4080,16 @@ function parseAndPreviewEmail() {
   if (!raw) { showToast('Paste email text first', true, false); return; }
   const parsed = parseEmailText(raw);
   if (!parsed.clientName && parsed.fromName) parsed.clientName = parsed.fromName;
-  parsed.clientNameMatched = _matchClient(parsed.clientName);
+  const contactOverride = document.getElementById('pasteContactSel')?.value;
+  const actionOverride = document.getElementById('pasteActionSel')?.value;
+  if (contactOverride) { parsed.clientName = contactOverride; parsed.clientNameMatched = contactOverride; }
+  else parsed.clientNameMatched = _matchClient(parsed.clientName);
+  if (actionOverride) parsed.action = actionOverride;
   emailIngestItems.push({ ...parsed, _id: Date.now(), _skip: false });
   renderEmailIngestItems();
   document.getElementById('emailPasteArea').value = '';
+  if (document.getElementById('pasteContactSel')) document.getElementById('pasteContactSel').value = '';
+  if (document.getElementById('pasteActionSel')) document.getElementById('pasteActionSel').value = '';
 }
 
 function clearEmailIngestItems() {
@@ -4093,8 +4119,7 @@ async function loadGmailEmails() {
 
   try {
     const queries = [
-      'from:DoNotReply@iq.bigtime.net newer_than:30d',
-      '(subject:invoice OR subject:statement OR subject:payment) newer_than:14d -from:DoNotReply@iq.bigtime.net'
+      'in:inbox (subject:invoice OR subject:statement OR subject:"past due" OR subject:overdue OR subject:payment) newer_than:30d -from:DoNotReply@iq.bigtime.net -from:intuit.com -from:quickbooks.com -from:noreply -from:no-reply'
     ];
     const ids = new Set();
     for (const q of queries) {
