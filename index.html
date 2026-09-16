@@ -3892,6 +3892,7 @@ async function saveAssignAction(invoiceId, clientName) {
 
 let emailIngestItems = [];
 let _emailIngestInvoiceMap = null; // invoiceNumber → airtable record id
+let _emailIngestInvoiceList = []; // [{id, number, clientId}] for card selectors
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -3901,17 +3902,22 @@ async function initEmailIngest() {
   updateGmailStatus();
   if (!gApiToken || !gBaseId) return;
   if (_emailIngestInvoiceMap) return;
-  // Lazy-load invoice number → record id map
+  // Lazy-load invoice number → record id map + full list with client linkage
   _emailIngestInvoiceMap = {};
+  _emailIngestInvoiceList = [];
   let offset = '';
   try {
     do {
-      const url = `https://api.airtable.com/v0/${gBaseId}/Invoices?fields[]=Invoice+Number${offset ? '&offset='+offset : ''}`;
+      const url = `https://api.airtable.com/v0/${gBaseId}/Invoices?fields[]=Invoice+Number&fields[]=Client&fields[]=Status&sort[0][field]=Invoice+Number&sort[0][direction]=desc${offset ? '&offset='+offset : ''}`;
       const res = await fetch(url, { headers: { Authorization: `Bearer ${gApiToken}` } });
       const data = await res.json();
       for (const r of data.records || []) {
         const n = r.fields['Invoice Number'];
-        if (n) _emailIngestInvoiceMap[n] = r.id;
+        const clientId = (Array.isArray(r.fields['Client']) ? r.fields['Client'][0] : r.fields['Client']) || '';
+        if (n) {
+          _emailIngestInvoiceMap[n] = r.id;
+          _emailIngestInvoiceList.push({ id: r.id, number: n, clientId, status: r.fields['Status'] || '' });
+        }
       }
       offset = data.offset || '';
     } while (offset);
@@ -4062,6 +4068,37 @@ function renderEmailIngestItems() {
     ${emailIngestItems.map((item, idx) => _emailCard(item, idx)).join('')}`;
 }
 
+function _invoiceSelector(item, idx, clientId) {
+  const clientInvoices = _emailIngestInvoiceList.filter(inv => !clientId || inv.clientId === clientId);
+  if (!clientInvoices.length) {
+    return `<div style="font-size:10px;color:var(--text-dim);font-family:'DM Mono',monospace">${clientId ? 'No invoices found for this client' : 'Select a client to filter invoices'}</div>`;
+  }
+  const selected = new Set(item.selectedInvoiceIds || []);
+  const autoIds = new Set(_invoiceIds(item.invoiceNumbers || []));
+  const checkboxes = clientInvoices.map(inv => {
+    const isSelected = selected.has(inv.id) || (!selected.size && autoIds.has(inv.id));
+    const statusLabel = inv.status && inv.status !== 'Paid' ? ` · ${inv.status}` : '';
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:11px;font-family:'DM Mono',monospace;color:var(--text);cursor:pointer;padding:3px 0">
+      <input type="checkbox" ${isSelected?'checked':''} onchange="_toggleInvoiceSel(${idx},'${inv.id}',this.checked)" />
+      <span>${escHtml(String(inv.number))}${escHtml(statusLabel)}</span>
+    </label>`;
+  }).join('');
+  return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:8px;max-height:120px;overflow-y:auto">
+    <div style="font-size:10px;color:var(--text-dim);font-family:'DM Mono',monospace;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Invoices</div>
+    ${checkboxes}
+  </div>`;
+}
+
+function _toggleInvoiceSel(idx, invoiceId, checked) {
+  if (!emailIngestItems[idx].selectedInvoiceIds) emailIngestItems[idx].selectedInvoiceIds = [];
+  if (checked) {
+    if (!emailIngestItems[idx].selectedInvoiceIds.includes(invoiceId))
+      emailIngestItems[idx].selectedInvoiceIds.push(invoiceId);
+  } else {
+    emailIngestItems[idx].selectedInvoiceIds = emailIngestItems[idx].selectedInvoiceIds.filter(id => id !== invoiceId);
+  }
+}
+
 function _emailCard(item, idx) {
   const skipped = item._skip ? 'opacity:0.45;' : '';
   const actionOpts = ['Email Sent','Email Received','Statement Sent','Phone Call','Note Added','Payment Received','PM Pinged']
@@ -4093,8 +4130,9 @@ function _emailCard(item, idx) {
     <div style="margin-bottom:8px">
       <select onchange="emailIngestItems[${idx}].contactId=this.value" style="width:100%;padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">${contactOpts}</select>
     </div>
+    <div style="margin-bottom:8px">${_invoiceSelector(item, idx, selectedClientId_card)}</div>
     <div style="font-size:10px;color:var(--text-dim);font-family:'DM Mono',monospace;margin-bottom:6px">
-      invoices: ${escHtml(invLabel)}${item.subject ? ' &nbsp;|&nbsp; subj: ' + escHtml(item.subject.substring(0,60)) : ''}
+      ${item.subject ? 'subj: ' + escHtml(item.subject.substring(0,80)) : ''}
     </div>
     <textarea onchange="emailIngestItems[${idx}].notes=this.value" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px;padding:7px;resize:vertical;min-height:56px">${escHtml(item.notes||'')}</textarea>
     <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
@@ -4212,7 +4250,7 @@ async function logEmailInteractions() {
   let logged = 0, failed = 0;
   for (const item of toLog) {
     try {
-      const ids = _invoiceIds(item.invoiceNumbers || []);
+      const ids = item.selectedInvoiceIds?.length ? item.selectedInvoiceIds : _invoiceIds(item.invoiceNumbers || []);
       const date = _parseDate(item.logDate || item.rawDate);
       const fields = {
         'Date': date,
