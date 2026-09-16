@@ -2638,6 +2638,7 @@ async function handleOAuthCallback() {
       body: new URLSearchParams({
         code,
         client_id: GOOGLE_CLIENT_ID,
+        client_secret: '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',
         redirect_uri: redirectUri,
         grant_type: 'authorization_code',
         code_verifier: verifier
