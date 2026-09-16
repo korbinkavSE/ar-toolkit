@@ -776,6 +776,7 @@ let conflictResolutions = {};
 // Log form state
 let allProjects = [];
 let allClients = [];
+let allContactsGlobal = [];
 let selectedProjectId = null;
 let projectInvoices = [];
 let teamMembers = [];
@@ -930,11 +931,26 @@ async function loadClients() {
     offset = data.offset || '';
   } while (offset);
   allClients.sort((a,b) => (a.fields['Client Name']||'').localeCompare(b.fields['Client Name']||''));
+  try {
+    const cd = await atFetch(TABLE_CONTACTS, `?fields[]=Name&fields[]=Client`);
+    allContactsGlobal = (cd.records || []).sort((a,b) => (a.fields.Name||'').localeCompare(b.fields.Name||''));
+  } catch(e) { allContactsGlobal = []; }
+  _populatePasteContactDropdown();
+}
+
+function _populatePasteContactDropdown() {
   const pcs = document.getElementById('pasteContactSel');
-  if (pcs) {
-    pcs.innerHTML = '<option value="">— Contact / From —</option>' +
-      allClients.map(c => { const n = c.fields['Client Name']||''; return `<option value="${escHtml(n)}">${escHtml(n)}</option>`; }).join('');
-  }
+  if (!pcs) return;
+  const clientMap = {};
+  allClients.forEach(c => { clientMap[c.id] = c.fields['Client Name'] || ''; });
+  pcs.innerHTML = '<option value="">— Contact / From —</option>' +
+    allContactsGlobal.map(c => {
+      const name = c.fields.Name || '';
+      const clientId = (Array.isArray(c.fields.Client) ? c.fields.Client[0] : c.fields.Client) || '';
+      const company = clientMap[clientId] || '';
+      const label = company ? `${name} (${company})` : name;
+      return `<option value="${escHtml(c.id)}" data-name="${escHtml(name)}" data-client="${escHtml(company)}">${escHtml(label)}</option>`;
+    }).join('');
 }
 
 async function loadTeamMembers() {
@@ -4056,11 +4072,26 @@ function _emailCard(item, idx) {
   const dateVal = _parseDate(item.logDate || item.rawDate);
   const clientSel = item.clientNameMatched || item.clientName || '';
 
+  const clientMap = {};
+  allClients.forEach(c => { clientMap[c.fields['Client Name']||''] = c.id; });
+  const selectedClientId_card = clientMap[clientSel] || '';
+  const contactOpts = '<option value="">— Contact person —</option>' +
+    allContactsGlobal
+      .filter(c => {
+        if (!selectedClientId_card) return true;
+        const cf = Array.isArray(c.fields.Client) ? c.fields.Client[0] : c.fields.Client;
+        return cf === selectedClientId_card;
+      })
+      .map(c => `<option value="${escHtml(c.id)}" ${item.contactId===c.id?'selected':''}>${escHtml(c.fields.Name||'')}</option>`).join('');
+
   return `<div style="${skipped}background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:14px;margin-bottom:10px">
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-      <select onchange="emailIngestItems[${idx}].clientName=this.value;emailIngestItems[${idx}].clientNameMatched=this.value" style="flex:1;min-width:160px;padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">${_clientOptions(clientSel)}</select>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+      <select onchange="emailIngestItems[${idx}].clientName=this.value;emailIngestItems[${idx}].clientNameMatched=this.value;renderEmailIngestItems()" style="flex:1;min-width:160px;padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">${_clientOptions(clientSel)}</select>
       <select onchange="emailIngestItems[${idx}].action=this.value" style="padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">${actionOpts}</select>
       <input type="date" value="${dateVal}" onchange="emailIngestItems[${idx}].logDate=this.value" style="padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px" />
+    </div>
+    <div style="margin-bottom:8px">
+      <select onchange="emailIngestItems[${idx}].contactId=this.value" style="width:100%;padding:5px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;border-radius:3px">${contactOpts}</select>
     </div>
     <div style="font-size:10px;color:var(--text-dim);font-family:'DM Mono',monospace;margin-bottom:6px">
       invoices: ${escHtml(invLabel)}${item.subject ? ' &nbsp;|&nbsp; subj: ' + escHtml(item.subject.substring(0,60)) : ''}
@@ -4081,10 +4112,19 @@ function parseAndPreviewEmail() {
   if (!raw) { showToast('Paste email text first', true, false); return; }
   const parsed = parseEmailText(raw);
   if (!parsed.clientName && parsed.fromName) parsed.clientName = parsed.fromName;
-  const contactOverride = document.getElementById('pasteContactSel')?.value;
+  const contactSelEl = document.getElementById('pasteContactSel');
+  const contactOverride = contactSelEl?.value;
   const actionOverride = document.getElementById('pasteActionSel')?.value;
-  if (contactOverride) { parsed.clientName = contactOverride; parsed.clientNameMatched = contactOverride; }
-  else parsed.clientNameMatched = _matchClient(parsed.clientName);
+  if (contactOverride) {
+    const opt = contactSelEl.options[contactSelEl.selectedIndex];
+    parsed.contactId = contactOverride;
+    parsed.contactName = opt?.dataset?.name || '';
+    const company = opt?.dataset?.client || '';
+    if (company) { parsed.clientName = company; parsed.clientNameMatched = company; }
+    else parsed.clientNameMatched = _matchClient(parsed.clientName);
+  } else {
+    parsed.clientNameMatched = _matchClient(parsed.clientName);
+  }
   if (actionOverride) parsed.action = actionOverride;
   emailIngestItems.push({ ...parsed, _id: Date.now(), _skip: false });
   renderEmailIngestItems();
@@ -4182,6 +4222,7 @@ async function logEmailInteractions() {
       };
       if (ids.length) fields['Invoices'] = ids;
       if (item.followUp && item.nextSteps) fields['Next Steps'] = item.nextSteps;
+      if (item.contactId) fields['Client Contact'] = [item.contactId];
       await atPost(TABLE_ACTIVITY, fields);
       item._logged = true;
       logged++;
