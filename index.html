@@ -825,13 +825,14 @@ function addDays(dateStr, days) {
 // SHARED CONNECTION
 // ══════════════════════════════════════════════
 async function connectAll() {
-  gApiToken = document.getElementById('apiToken').value.trim();
+  gApiToken = document.getElementById('apiToken').value.trim()
+    || localStorage.getItem('ar_api_token')
+    || sessionStorage.getItem('ar_api_token') || '';
   gBaseId = document.getElementById('baseId').value.trim();
   const status = document.getElementById('credsStatus');
 
   if (!gApiToken || !gBaseId) {
-    status.textContent = 'Enter token and base ID';
-    status.className = 'creds-status err';
+    if (!document.getElementById('token-screen')) showTokenPrompt();
     return;
   }
 
