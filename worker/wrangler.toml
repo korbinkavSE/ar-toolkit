@@ -1,4 +1,4 @@
-name = "ar-toolkit-pdf"
+name = "ar-toolkit-new"
 main = "src/worker.js"
 compatibility_date = "2024-09-23"
 
