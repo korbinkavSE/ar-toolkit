@@ -2563,8 +2563,8 @@ async function saveNewContactAndDraft(clientName) {
 
 console.log('Drive constants loading...');
 var DRIVE_FOLDER_ID = '1P1OXr0pw-w9olBAxplzsrDgM8leHaJ-O';
-// PDFShift proxy — update after `wrangler deploy` with your actual workers.dev URL
-var PDFSHIFT_PROXY = 'https://ar-toolkit-pdf.YOUR_SUBDOMAIN.workers.dev';
+// Worker base URL — update after `wrangler deploy` with your actual workers.dev subdomain
+var WORKER_BASE = 'https://ar-toolkit-pdf.YOUR_SUBDOMAIN.workers.dev';
 var GOOGLE_CLIENT_ID = '832930681823-gn72panu4d88gqqahktcnofn5o6nb8br.apps.googleusercontent.com';
 var GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive';
 var GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
@@ -2656,13 +2656,12 @@ async function handleOAuthCallback() {
   const redirectUri = window.location.href.split('?')[0].split('#')[0];
 
   try {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
+    const res = await fetch(WORKER_BASE + '/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         code,
         client_id: GOOGLE_CLIENT_ID,
-        client_secret: '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',
         redirect_uri: redirectUri,
         grant_type: 'authorization_code',
         code_verifier: verifier
@@ -2780,7 +2779,7 @@ async function uploadStatementToDrive(clientName) {
 
     let pdfBlob = null;
     try {
-      const pdfShiftRes = await fetch(PDFSHIFT_PROXY, {
+      const pdfShiftRes = await fetch(WORKER_BASE + '/pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: fullHTML, landscape: false, use_print: false, format: 'Letter' })
@@ -3051,7 +3050,7 @@ async function bulkDownloadStatements() {
     const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
     let added = false;
     try {
-      const pdfRes = await fetch(PDFSHIFT_PROXY, {
+      const pdfRes = await fetch(WORKER_BASE + '/pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: html, landscape: false, use_print: false, format: 'Letter' })
