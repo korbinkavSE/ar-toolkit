@@ -2563,6 +2563,8 @@ async function saveNewContactAndDraft(clientName) {
 
 console.log('Drive constants loading...');
 var DRIVE_FOLDER_ID = '1P1OXr0pw-w9olBAxplzsrDgM8leHaJ-O';
+// PDFShift proxy — update after `wrangler deploy` with your actual workers.dev URL
+var PDFSHIFT_PROXY = 'https://ar-toolkit-pdf.YOUR_SUBDOMAIN.workers.dev';
 var GOOGLE_CLIENT_ID = '832930681823-gn72panu4d88gqqahktcnofn5o6nb8br.apps.googleusercontent.com';
 var GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive';
 var GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
@@ -2778,12 +2780,9 @@ async function uploadStatementToDrive(clientName) {
 
     let pdfBlob = null;
     try {
-      const pdfShiftRes = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
+      const pdfShiftRes = await fetch(PDFSHIFT_PROXY, {
         method: 'POST',
-        headers: {
-          'X-API-Key': 'sk_19c9ac16821dc750c23d237482dfe4e0f0288406',
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: fullHTML, landscape: false, use_print: false, format: 'Letter' })
       });
       if (!pdfShiftRes.ok) {
@@ -3052,9 +3051,9 @@ async function bulkDownloadStatements() {
     const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
     let added = false;
     try {
-      const pdfRes = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
+      const pdfRes = await fetch(PDFSHIFT_PROXY, {
         method: 'POST',
-        headers: { 'X-API-Key': 'sk_19c9ac16821dc750c23d237482dfe4e0f0288406', 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: html, landscape: false, use_print: false, format: 'Letter' })
       });
       if (pdfRes.ok) {

@@ -1,0 +1,7 @@
+name = "ar-toolkit-pdf"
+main = "src/worker.js"
+compatibility_date = "2024-09-23"
+
+# After deploying, note your workers.dev subdomain and update
+# PDFSHIFT_PROXY in index.html to match.
+# Then run: wrangler secret put PDFSHIFT_API_KEY
